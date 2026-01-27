@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Credo Voice Gate – Odin Speaks</title>
+  <style>
+    body { 
+      margin: 0; 
+      font-family: 'Georgia', serif; 
+      background: linear-gradient(to bottom, #000, #0a1a2a); 
+      color: #e0e0ff; 
+      padding: 30px; 
+      min-height: 100vh;
+    }
+    h1 { 
+      color: #88ffff; 
+      text-shadow: 0 0 15px #00ffff; 
+      text-align: center; 
+      margin-bottom: 10px;
+    }
+    #subtitle { 
+      text-align: center; 
+      color: #88ff88; 
+      font-style: italic; 
+      margin-bottom: 30px;
+    }
+    #controls { 
+      text-align: center; 
+      margin: 20px 0;
+    }
+    button { 
+      padding: 14px 30px; 
+      font-size: 1.2em; 
+      margin: 0 15px; 
+      cursor: pointer; 
+      background: #1a3a5a; 
+      color: #88ffff; 
+      border: 1px solid #00ffff; 
+      border-radius: 8px;
+    }
+    button:hover { background: #2a4a7a; }
+    #status { 
+      text-align: center; 
+      font-size: 1.3em; 
+      margin: 20px 0; 
+      color: #ffdd88;
+    }
+    #transcript { 
+      text-align: center; 
+      font-size: 1.1em; 
+      margin: 15px 0; 
+      color: #aaffaa;
+    }
+    #response { 
+      max-width: 800px; 
+      margin: 30px auto; 
+      padding: 20px; 
+      background: rgba(10, 20, 40, 0.7); 
+      border: 1px solid #004488; 
+      border-radius: 10px; 
+      white-space: pre-wrap; 
+      line-height: 1.6; 
+      font-size: 1.15em;
+    }
+    #loading { display: none; text-align: center; font-size: 1.4em; color: #ff8800; }
+  </style>
+</head>
+<body>
+  <h1>Credo Voice Gate</h1>
+  <div id="subtitle">Speak to Odin – wisdom through sacrifice awaits</div>
+
+  <div id="controls">
+    <button onclick="startListening()">Speak to Odin</button>
+    <button onclick="simulateQuestion()">Type Question</button>
+  </div>
+
+  <div id="status">Status: Ready to hear your voice</div>
+  <div id="transcript"></div>
+  <div id="loading">Consulting the runes...</div>
+  <div id="response"></div>
+
+  <script>
+    // Load frozen core
+    let graphData = null;
+    fetch('credo-core-norse-frozen.json')
+      .then(res => res.json())
+      .then(data => {
+        graphData = data.graph;
+        document.getElementById('status').innerText = 'Core loaded – speak or type your question';
+      })
+      .catch(err => {
+        document.getElementById('status').innerText = 'Error loading core: ' + err;
+        document.getElementById('response').innerText = 'Failed to load Credo core. Check file path.';
+      });
+
+    // Voice recognition setup
+    const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    function startListening() {
+      document.getElementById('status').innerText = 'Listening... Speak now (e.g. "What wisdom for strength?")';
+      document.getElementById('loading').style.display = 'block';
+      recognition.start();
+    }
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript.trim();
+      document.getElementById('transcript').innerText = 'You said: ' + transcript;
+      processQuestion(transcript);
+    };
+
+    recognition.onerror = (event) => {
+      document.getElementById('status').innerText = 'Voice error: ' + event.error;
+      document.getElementById('loading').style.display = 'none';
+    };
+
+    recognition.onend = () => {
+      document.getElementById('loading').style.display = 'none';
+    };
+
+    // Fallback: type question
+    function simulateQuestion() {
+      const q = prompt("Ask Odin (e.g. 'What wisdom for loss?' or 'Recite on sacrifice'):");
+      if (q) {
+        document.getElementById('transcript').innerText = 'You asked: ' + q;
+        processQuestion(q);
+      }
+    }
+
+    // Main processing logic
+    function processQuestion(question) {
+      if (!graphData) {
+        document.getElementById('response').innerText = 'Core not loaded yet.';
+        return;
+      }
+
+      document.getElementById('status').innerText = 'Consulting runes...';
+      document.getElementById('loading').style.display = 'block';
+
+      // Keyword search across nodes
+      const keywords = question.toLowerCase().split(/\W+/).filter(w => w.length > 2);
+      let matches = [];
+
+      graphData.nodes.forEach(node => {
+        if (node.properties?.description || node.name) {
+          const text = (node.name + ' ' + (node.properties?.description || '')).toLowerCase();
+          let score = 0;
+          keywords.forEach(kw => { if (text.includes(kw)) score += 1; });
+          if (score > 0) matches.push({ node, score });
+        }
+      });
+
+      matches.sort((a, b) => b.score - a.score);
+      matches = matches.slice(0, 5); // top 5 matches
+
+      if (matches.length === 0) {
+        const fallback = "Odin hears no clear rune in this question.\nSpeak more plainly, seeker.";
+        document.getElementById('response').innerText = fallback;
+        speak(fallback);
+        document.getElementById('status').innerText = 'No clear match';
+        document.getElementById('loading').style.display = 'none';
+        return;
+      }
+
+      // Quick ordeal sim (1000-run MC on matched node vals)
+      let total = 0, minD = Infinity, maxD = -Infinity;
+      for (let i = 0; i < 1000; i++) {
+        let d = 1.042; // crystalline base
+        matches.forEach(m => {
+          const v = m.node.properties?.val || 80;
+          const varr = (Math.random() - 0.5) * 0.2; // ±10%
+          d *= (1 + varr * (v / 100));
+        });
+        total += d;
+        minD = Math.min(minD, d);
+        maxD = Math.max(maxD, d);
+      }
+      const mean = total / 1000;
+      const damped = mean / 1.25;
+
+      // Poetic Odin-style response
+      let response = "Odin speaks through the runes:\n\n";
+      matches.forEach(m => {
+        const n = m.node;
+        response += `• ${n.name || n.id}: ${n.properties?.description?.substring(0, 120) || '...'}\n`;
+      });
+
+      response += `\nTruth density converged: ${damped.toFixed(4)} (min ${minD.toFixed(3)}, max ${maxD.toFixed(3)})\n\n`;
+      response += "Wisdom distilled: Seek the path where thought and memory return,\n";
+      response += "lest the wolves devour what the ravens cannot bring back.\n";
+      response += "Speak again if the runes call for more.";
+
+      document.getElementById('response').innerText = response;
+      document.getElementById('status').innerText = 'Odin has spoken.';
+      document.getElementById('loading').style.display = 'none';
+
+      // Speak the response
+      speak(response);
+    }
+
+    // Text-to-speech
+    function speak(text) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.pitch = 0.2;   // Deep, Odin-like
+      utterance.rate = 0.9;
+      utterance.volume = 0.9;
+      speechSynthesis.speak(utterance);
+    }
+  </script>
+</body>
+</html>

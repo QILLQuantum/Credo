@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Credo Node Ball</title>
+  <style>
+    body { margin: 0; background: #000; }
+    #3d-graph { width: 100vw; height: 100vh; }
+  </style>
+  <script src="https://unpkg.com/3d-force-graph"></script>
+  <script src="https://unpkg.com/three"></script>
+</head>
+<body>
+  <div id="3d-graph"></div>
+  <script>
+    const Graph = ForceGraph3D()
+      (document.getElementById('3d-graph'))
+        .jsonUrl('credo_core_norse_frozen.json')  // Load your frozen JSON
+        .nodeLabel(node => `${node.name || node.id}<br>Val: ${node.val || ''}`)
+        .nodeAutoColorBy('type')
+        .nodeVal(node => node.val || 10)
+        .linkWidth(2)
+        .linkDirectionalParticles(2)
+        .backgroundColor('#000')
+        .nodeThreeObject(node => {
+          const sprite = new SpriteText(node.name || node.id);
+          sprite.color = node.color || 'lightblue';
+          sprite.textHeight = 8;
+          return sprite;
+        });
+  </script>
+</body>
+</html>

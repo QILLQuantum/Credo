@@ -1,0 +1,83 @@
+[
+  {
+    "id": "jediism_force",
+    "type": "FictionSyncreticNode",
+    "name": "Jediism – The Force",
+    "properties": {
+      "description": "Living energy field created by all life; binds the galaxy, grants power through balance and will. Syncretic bridge: Force as seidr-like wisdom (Freyja/Odin), lightsaber as Gungnir spear, Jedi Code as Hávamál counsel.",
+      "tags": ["fiction", "jediism", "force", "balance", "seidr_parallel"],
+      "resonance": 0.88,
+      "val": 88
+    }
+  },
+  {
+    "id": "lovecraft_cosmic_indifference",
+    "type": "FictionSyncreticNode",
+    "name": "Lovecraft – Cosmic Indifference",
+    "properties": {
+      "description": "Vast, uncaring cosmos filled with elder gods (Cthulhu, Nyarlathotep) beyond human comprehension. Syncretic bridge: Cosmic indifference as Ragnarök inevitability, elder gods as Jötnar/primordial chaos (Surtr, Ymir), madness as seidr trance gone wrong.",
+      "tags": ["fiction", "lovecraft", "cosmic_indifference", "ragnarok_echo", "elder_gods"],
+      "resonance": 0.85,
+      "val": 85
+    }
+  },
+  {
+    "id": "dune_prophetic",
+    "type": "FictionSyncreticNode",
+    "name": "Dune – Prophetic Vision",
+    "properties": {
+      "description": "Paul Atreides as Kwisatz Haderach — seer of all possible futures, spice-enhanced prescience. Syncretic bridge: Prophetic vision as Völuspá foresight, spice as mead of poetry, desert ecology as vaettir/land spirits.",
+      "tags": ["fiction", "dune", "prophecy", "prescience", "voluspa_parallel"],
+      "resonance": 0.87,
+      "val": 87
+    }
+  }
+{
+  "id": "sacrifice_wisdom_redemption_archetype",
+  "type": "ArchetypeHub",
+  "name": "Sacrifice-for-Wisdom & Redemption Archetype",
+  "properties": {
+    "description": "The universal pattern of self-sacrifice to gain/transmit transformative knowledge or redemption. Odin hangs for runes; Christ dies for salvation. Both give everything to receive/give ultimate wisdom/grace.",
+    "tags": ["archetype", "sacrifice", "wisdom", "redemption", "renewal", "self-offering"],
+    "resonance": 0.92,
+    "val": 92
+  }
+}
+[
+  {
+    "source": "odin",
+    "target": "sacrifice_wisdom_redemption_archetype",
+    "type": "SacrificeForWisdom",
+    "properties": {
+      "description": "Odin's hanging on Yggdrasil for rune-knowledge",
+      "resonance": 0.94
+    }
+  },
+  {
+    "source": "jesus_christ",
+    "target": "sacrifice_wisdom_redemption_archetype",
+    "type": "SacrificeForRedemption",
+    "properties": {
+      "description": "Christ's crucifixion for humanity's salvation and knowledge of God",
+      "resonance": 0.90
+    }
+  },
+  {
+    "source": "huginn_thought",
+    "target": "sacrifice_wisdom_redemption_archetype",
+    "type": "MindSacrificeBridge",
+    "properties": {
+      "description": "Thought/memory ravens witness the sacrifice for higher knowledge",
+      "resonance": 0.85
+    }
+  },
+  {
+    "source": "valhalla_feast_ritual",
+    "target": "sacrifice_wisdom_redemption_archetype",
+    "type": "RenewalThroughSacrifice",
+    "properties": {
+      "description": "Endless feast renewal echoes resurrection/redemption cycle",
+      "resonance": 0.87
+    }
+  }
+]

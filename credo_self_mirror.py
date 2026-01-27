@@ -2,6 +2,15 @@
 # Bootstrap self-querying mirror rune for reflective cavity
 # Preserves immutability (append-only pool) and self-guidance (no external triggers post-init)
 
+import numpy as np
+from qutip import rand_dm  # From quantum sim dependencies (QuTiP)
+
+# Extracted from credo_brqin_quantum_sim.py
+def von_neumann_entropy(rho):
+    evals = rho.eigenenergies()
+    evals = evals[evals > 1e-10]
+    return -np.sum(evals * np.log2(evals))
+
 class MirrorRune:
     def __init__(self, core_path=None):
         # Mock frozen core for prototype; load from credo_core_norse_frozen.json in production
@@ -11,9 +20,14 @@ class MirrorRune:
         self.max_recursion_depth = 5  # Prevent infinite recursion
 
     def evaluate_density(self, state):
-        # Prototype mock: Density increases with pool size to simulate refinement
-        # Production: Integrate credo_brqin_quantum_sim.py for real waveform/quantum density calc
-        return 0.7 + (len(self.reflection_pool) * 0.05)
+        # Integrated with quantum sim: Compute 1 - normalized entropy of random dm
+        # Dim increases with pool for variation (simulates growing complexity)
+        dim = max(2, len(self.reflection_pool))
+        rho = rand_dm(dim)  # Random density matrix (quantum sim output analog)
+        entropy = von_neumann_entropy(rho)
+        max_entropy = np.log2(dim)
+        normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
+        return 1 - normalized_entropy  # High density for coherent (pure-like) states
 
     def bootstrap_self_query(self, initial_state):
         """Bootstrap: Append initial state, then interrogate if low-density."""

@@ -21,22 +21,18 @@ class MirrorRune:
         self.max_recursion_depth = 5  # Prevent infinite recursion
 
     def evaluate_density(self, state):
-        # Replaced with blended sim + ordeal mean (Monte Carlo preferred)
-        # Step 1: Quantum sim component (entropy-based coherence)
-        dim = max(2, len(self.reflection_pool))
-        rho = rand_dm(dim)  # Random density matrix from sim
-        entropy = von_neumann_entropy(rho)
-        max_entropy = np.log2(dim)
-        normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
-        sim_density = 1 - normalized_entropy  # Coherence as density (0-1)
-
-        # Step 2: Ordeal Monte Carlo mean (scaled down for test; use full runs in prod)
-        ordeal_result = credo_ordeal_final(base_density=1.042, runs=1000, chunk_size=1000)  # Small runs for speed
+        # Preferred: Monte Carlo mean from ordeal_final (with light sim blend)
+        # Run small Monte Carlo (1000 runs for test; scale up in prod)
+        ordeal_result = credo_ordeal_final(base_density=1.042, runs=1000, chunk_size=1000)
         ordeal_mean = ordeal_result['mean_density']
 
-        # Blend: Average sim_density (0-1) and normalized ordeal_mean (scale ordeal to 0-1 assuming ~1.0 base)
-        normalized_ordeal = min(max(ordeal_mean / 2.0, 0.0), 1.0)  # Normalize assuming typical range ~0.5-1.5
-        blended_density = (sim_density + normalized_ordeal) / 2.0
+        # Light sim blend: Normalize ordeal_mean (0-1 scale), add sim coherence boost
+        normalized_ordeal = min(max(ordeal_mean / 2.0, 0.0), 1.0)  # Assuming typical range ~0.5-1.5
+        dim = max(2, len(self.reflection_pool))
+        rho = rand_dm(dim)
+        entropy = von_neumann_entropy(rho)
+        sim_coherence = 1 - (entropy / np.log2(dim) if np.log2(dim) > 0 else 0)
+        blended_density = (normalized_ordeal * 0.7) + (sim_coherence * 0.3)  # Weight toward ordeal (70/30)
         return blended_density
 
     def bootstrap_self_query(self, initial_state):
@@ -61,19 +57,19 @@ class MirrorRune:
         new_state = {
             'input': new_input,
             'ordeal': 'self-mirror',
-            'voice': f"Voice at depth {depth}",  # Mock voice; refined below
+            'voice': f"Voice at depth {depth}",  # Updated below via ordeal
             'refinement': f"Refined at depth {depth}"
         }
 
-        # Integrate credo_ordeal_final to refine new_state (e.g., update voice/refinement, set 'density')
-        # Use small runs for test; pass base from sim entropy
-        sim_entropy = von_neumann_entropy(rand_dm(2))  # Simple sim for base
+        # Full integration: Use credo_ordeal_final to refine new_state
+        # Pass sim-derived base (e.g., entropy from small dm)
+        sim_entropy = von_neumann_entropy(rand_dm(2))  # Quick sim for base variability
         ordeal_result = credo_ordeal_final(base_density=1.0 + sim_entropy, runs=1000, chunk_size=1000)
         new_state['voice'] = f"Ordeal voice: {ordeal_result['interpretation']}"
         new_state['refinement'] = f"Ordeal refined: Damped truth {ordeal_result['final_damped_truth']:.4f}"
-        new_state['density'] = (1 - sim_entropy + ordeal_result['mean_density']) / 2.0  # Set 'density' based on sim + ordeal mean
+        new_state['density'] = ordeal_result['mean_density']  # Set 'density' directly from ordeal mean (with sim influence in base)
 
-        refined = new_state  # In prod, could expand with more ordeal outputs
+        refined = new_state  # Could expand with more ordeal fields in prod
 
         self.reflection_pool.append(refined)  # Immutable append
         return self._self_interrogate(refined, depth + 1)  # Recurse

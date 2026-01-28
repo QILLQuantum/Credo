@@ -1,22 +1,21 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Real-Time Mercy Node Ball Visualization</title>
+    <title>Live Mercy Node Ball Visualization (WebSocket)</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body { margin: 0; }
-        svg { width: 100vw; height: 100vh; background: #0a0a0a; } /* Dark veil for mercy theme */
+        svg { width: 100vw; height: 100vh; background: #0a0a0a; }
         .edge { stroke: #444; stroke-width: 1px; opacity: 0.5; }
         .label { font: 14px sans-serif; text-anchor: middle; pointer-events: none; fill: #fff; text-shadow: 1px 1px 2px black; }
-        .reload-info { position: absolute; top: 10px; left: 10px; font: 12px sans-serif; color: #888; }
+        .status { position: absolute; top: 10px; left: 10px; font: 12px sans-serif; color: #888; }
     </style>
 </head>
 <body>
-    <div class="reload-info">Auto-reloading every 10 seconds — veiled supreme mercy absolute uplift absolute</div>
+    <div class="status" id="status">Connecting to WebSocket... — veiled supreme mercy absolute uplift absolute</div>
     <script>
         const width = window.innerWidth;
         const height = window.innerHeight;
-        const reloadInterval = 10000;  // 10 seconds
 
         let svg = d3.select("body").append("svg")
             .attr("width", width)
@@ -26,9 +25,9 @@
         let nodes = [];
         let edges = [];
 
+        const statusDiv = document.getElementById("status");
+
         function getMercyColor(val) {
-            // Mercy-themed colors: High resonance/density = lush green (uplift), low = deep red (ordeal wound)
-            // val assumed 0-100; map to green (#00ff00) for high, red (#ff0000) for low
             const normalized = val / 100;
             const r = Math.round(255 * (1 - normalized));
             const g = Math.round(255 * normalized);
@@ -39,31 +38,26 @@
         function updateGraph(data) {
             const graph = data.graph || { nodes: [], edges: [] };
 
-            // Process nodes with mercy color from resonance val
             nodes = graph.nodes.map((node, i) => ({
                 id: node.id || i,
                 label: `${node.name || 'Node'} (${node.properties?.tags?.join(', ') || ''})`,
                 description: node.properties?.description || '',
-                val: node.properties?.val || 50,  // Default mid-resonance
-                r: 25 + (node.properties?.val || 50) * 0.4  // Scale radius with resonance
+                val: node.properties?.val || 50,
+                r: 25 + (node.properties?.val || 50) * 0.4
             }));
 
-            // Process edges
             edges = graph.edges.map(edge => ({
                 source: edge.source,
                 target: edge.target
             }));
 
-            // Clear previous
             svg.selectAll("*").remove();
 
-            // Render edges
             const link = svg.selectAll("line")
                 .data(edges)
                 .enter().append("line")
                 .attr("class", "edge");
 
-            // Render nodes with mercy color
             const node = svg.selectAll("circle")
                 .data(nodes)
                 .enter().append("circle")
@@ -74,14 +68,12 @@
                     console.log(`Mercy resonance ${d.val}: ${d.description}`);
                 });
 
-            // Render labels
             const label = svg.selectAll("text")
                 .data(nodes)
                 .enter().append("text")
                 .attr("class", "label")
                 .text(d => d.label);
 
-            // Force simulation
             if (simulation) simulation.stop();
             simulation = d3.forceSimulation(nodes)
                 .force("charge", d3.forceManyBody().strength(-120))
@@ -101,18 +93,26 @@
                 });
         }
 
-        function loadGraph() {
-            fetch('credo-fork-fiction-waves-christianity-bridge.json?' + new Date().getTime())
-                .then(response => response.json())
-                .then(data => updateGraph(data))
-                .catch(error => console.error('Graph load error:', error));
-        }
+        // WebSocket for live updates
+        const ws = new WebSocket("ws://localhost:8765");
 
-        // Initial load
-        loadGraph();
+        ws.onopen = function() {
+            statusDiv.textContent = "WebSocket live — veiled supreme mercy absolute uplift absolute eternal";
+        };
 
-        // Auto-reload loop
-        setInterval(loadGraph, reloadInterval);
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            updateGraph(data);
+        };
+
+        ws.onclose = function() {
+            statusDiv.textContent = "WebSocket closed — silence returns";
+        };
+
+        ws.onerror = function(error) {
+            console.error("WebSocket error:", error);
+            statusDiv.textContent = "WebSocket error — mercy endures";
+        };
     </script>
 </body>
 </html>

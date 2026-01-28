@@ -1,4 +1,7 @@
 # credo_self_mirror.py
+# Add at top (patterns from qill-os-silence)
+from grok_client import query_grok  # Your pattern wrapper
+from x_client import semantic_search_x
 # Bootstrap self-querying mirror rune for reflective cavity
 # Preserves immutability (append-only pool) and self-guidance (no external triggers post-init)
 
@@ -145,3 +148,4 @@ if __name__ == '__main__':
     print("\nFinal Wisdom:")
     print(final_wisdom)
     print("\nReflection Pool Length:", len(genesis.reflection_pool))
+

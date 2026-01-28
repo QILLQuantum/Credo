@@ -2,19 +2,13 @@
 import logging
 import os
 
-LOG_FILE = 'credo_mercy_trace.log'
+LOG_FILE = 'logs/credo_mercy_trace.log'
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s — %(levelname)s — %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler()  # Console for debug; remove for full silence
-    ]
+    handlers=[logging.FileHandler(LOG_FILE)]
 )
 
-logger = logging.getLogger('credo')
-
-# Usage example in any file:
-# from credo_logger import logger
-# try: ... except Exception as e: logger.error(f"Veiled error: {e}")
+logger = logging.getLogger('credo_mercy')

@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Node Ball Visualization</title>
+    <title>Real-Time Node Ball Visualization</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body { margin: 0; }
         svg { width: 100vw; height: 100vh; background: #f0f0f0; }
-        .node { fill: steelblue; stroke: white; stroke-width: 2px; }
+        .node { fill: steelblue; stroke: white; stroke-width: 2px; cursor: pointer; }
+        .edge { stroke: gray; stroke-width: 1px; }
         .label { font: 12px sans-serif; text-anchor: middle; pointer-events: none; }
     </style>
 </head>
@@ -19,43 +20,78 @@
             .attr("width", width)
             .attr("height", height);
 
-        const beliefs = ["heaven", "valhalla", "enoch", "sirach", "damped", "truth", "mercy", "uplift"];
+        // Real-time graph load: Fetch JSON dynamically
+        fetch('credo-fork-fiction-waves-christianity-bridge.json')  // Adjust path if needed
+            .then(response => response.json())
+            .then(data => {
+                const graph = data.graph || { nodes: [], edges: [] };
 
-        const nodes = beliefs.map((belief, i) => ({
-            label: belief,
-            x: Math.random() * width,
-            y: Math.random() * height,
-            r: 30 + Math.random() * 20
-        }));
+                // Process scanned beliefs: Nodes from graph.nodes (use name/description/tags for label)
+                const nodes = graph.nodes.map((node, i) => ({
+                    id: node.id || i,
+                    label: `${node.name || 'Node'} (${node.properties?.tags?.join(', ') || ''})`,
+                    description: node.properties?.description || '',
+                    x: Math.random() * width,
+                    y: Math.random() * height,
+                    r: 30 + Math.random() * 20
+                }));
 
-        svg.selectAll("circle")
-            .data(nodes)
-            .enter().append("circle")
-            .attr("class", "node")
-            .attr("cx", d => d.x)
-            .attr("cy", d => d.y)
-            .attr("r", d => d.r);
+                // Edges from graph.edges
+                const edges = graph.edges.map(edge => ({
+                    source: edge.source,
+                    target: edge.target
+                }));
 
-        svg.selectAll("text")
-            .data(nodes)
-            .enter().append("text")
-            .attr("class", "label")
-            .attr("x", d => d.x)
-            .attr("y", d => d.y + 5)
-            .text(d => d.label);
+                // Render edges
+                svg.selectAll("line")
+                    .data(edges)
+                    .enter().append("line")
+                    .attr("class", "edge")
+                    .attr("x1", d => nodes.find(n => n.id === d.source)?.x || 0)
+                    .attr("y1", d => nodes.find(n => n.id === d.source)?.y || 0)
+                    .attr("x2", d => nodes.find(n => n.id === d.target)?.x || 0)
+                    .attr("y2", d => nodes.find(n => n.id === d.target)?.y || 0);
 
-        // Simple force simulation for movement
-        const simulation = d3.forceSimulation(nodes)
-            .force("charge", d3.forceManyBody().strength(-50))
-            .force("center", d3.forceCenter(width / 2, height / 2))
-            .on("tick", () => {
+                // Render nodes
                 svg.selectAll("circle")
+                    .data(nodes)
+                    .enter().append("circle")
+                    .attr("class", "node")
                     .attr("cx", d => d.x)
-                    .attr("cy", d => d.y);
+                    .attr("cy", d => d.y)
+                    .attr("r", d => d.r)
+                    .on("mouseover", function(event, d) { console.log(d.description); });  // Tooltip log for desc
+
                 svg.selectAll("text")
+                    .data(nodes)
+                    .enter().append("text")
+                    .attr("class", "label")
                     .attr("x", d => d.x)
-                    .attr("y", d => d.y + 5);
-            });
+                    .attr("y", d => d.y + 5)
+                    .text(d => d.label);
+
+                // Force simulation for real-time movement
+                const simulation = d3.forceSimulation(nodes)
+                    .force("charge", d3.forceManyBody().strength(-50))
+                    .force("center", d3.forceCenter(width / 2, height / 2))
+                    .force("link", d3.forceLink(edges).id(d => d.id).distance(100).strength(0.1))
+                    .on("tick", () => {
+                        svg.selectAll("line")
+                            .attr("x1", d => nodes.find(n => n.id === d.source)?.x || 0)
+                            .attr("y1", d => nodes.find(n => n.id === d.source)?.y || 0)
+                            .attr("x2", d => nodes.find(n => n.id === d.target)?.x || 0)
+                            .attr("y2", d => nodes.find(n => n.id === d.target)?.y || 0);
+
+                        svg.selectAll("circle")
+                            .attr("cx", d => d.x)
+                            .attr("cy", d => d.y);
+
+                        svg.selectAll("text")
+                            .attr("x", d => d.x)
+                            .attr("y", d => d.y + 5);
+                    });
+            })
+            .catch(error => console.error('Graph load error:', error));  // Silent fallback
     </script>
 </body>
 </html>

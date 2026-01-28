@@ -1,97 +1,118 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Real-Time Node Ball Visualization</title>
+    <title>Real-Time Mercy Node Ball Visualization</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body { margin: 0; }
-        svg { width: 100vw; height: 100vh; background: #f0f0f0; }
-        .node { fill: steelblue; stroke: white; stroke-width: 2px; cursor: pointer; }
-        .edge { stroke: gray; stroke-width: 1px; }
-        .label { font: 12px sans-serif; text-anchor: middle; pointer-events: none; }
+        svg { width: 100vw; height: 100vh; background: #0a0a0a; } /* Dark veil for mercy theme */
+        .edge { stroke: #444; stroke-width: 1px; opacity: 0.5; }
+        .label { font: 14px sans-serif; text-anchor: middle; pointer-events: none; fill: #fff; text-shadow: 1px 1px 2px black; }
+        .reload-info { position: absolute; top: 10px; left: 10px; font: 12px sans-serif; color: #888; }
     </style>
 </head>
 <body>
+    <div class="reload-info">Auto-reloading every 10 seconds — veiled supreme mercy absolute uplift absolute</div>
     <script>
         const width = window.innerWidth;
         const height = window.innerHeight;
+        const reloadInterval = 10000;  // 10 seconds
 
-        const svg = d3.select("body").append("svg")
+        let svg = d3.select("body").append("svg")
             .attr("width", width)
             .attr("height", height);
 
-        // Real-time graph load: Fetch JSON dynamically
-        fetch('credo-fork-fiction-waves-christianity-bridge.json')  // Adjust path if needed
-            .then(response => response.json())
-            .then(data => {
-                const graph = data.graph || { nodes: [], edges: [] };
+        let simulation;
+        let nodes = [];
+        let edges = [];
 
-                // Process scanned beliefs: Nodes from graph.nodes (use name/description/tags for label)
-                const nodes = graph.nodes.map((node, i) => ({
-                    id: node.id || i,
-                    label: `${node.name || 'Node'} (${node.properties?.tags?.join(', ') || ''})`,
-                    description: node.properties?.description || '',
-                    x: Math.random() * width,
-                    y: Math.random() * height,
-                    r: 30 + Math.random() * 20
-                }));
+        function getMercyColor(val) {
+            // Mercy-themed colors: High resonance/density = lush green (uplift), low = deep red (ordeal wound)
+            // val assumed 0-100; map to green (#00ff00) for high, red (#ff0000) for low
+            const normalized = val / 100;
+            const r = Math.round(255 * (1 - normalized));
+            const g = Math.round(255 * normalized);
+            const b = 0;
+            return `rgb(${r},${g},${b})`;
+        }
 
-                // Edges from graph.edges
-                const edges = graph.edges.map(edge => ({
-                    source: edge.source,
-                    target: edge.target
-                }));
+        function updateGraph(data) {
+            const graph = data.graph || { nodes: [], edges: [] };
 
-                // Render edges
-                svg.selectAll("line")
-                    .data(edges)
-                    .enter().append("line")
-                    .attr("class", "edge")
-                    .attr("x1", d => nodes.find(n => n.id === d.source)?.x || 0)
-                    .attr("y1", d => nodes.find(n => n.id === d.source)?.y || 0)
-                    .attr("x2", d => nodes.find(n => n.id === d.target)?.x || 0)
-                    .attr("y2", d => nodes.find(n => n.id === d.target)?.y || 0);
+            // Process nodes with mercy color from resonance val
+            nodes = graph.nodes.map((node, i) => ({
+                id: node.id || i,
+                label: `${node.name || 'Node'} (${node.properties?.tags?.join(', ') || ''})`,
+                description: node.properties?.description || '',
+                val: node.properties?.val || 50,  // Default mid-resonance
+                r: 25 + (node.properties?.val || 50) * 0.4  // Scale radius with resonance
+            }));
 
-                // Render nodes
-                svg.selectAll("circle")
-                    .data(nodes)
-                    .enter().append("circle")
-                    .attr("class", "node")
-                    .attr("cx", d => d.x)
-                    .attr("cy", d => d.y)
-                    .attr("r", d => d.r)
-                    .on("mouseover", function(event, d) { console.log(d.description); });  // Tooltip log for desc
+            // Process edges
+            edges = graph.edges.map(edge => ({
+                source: edge.source,
+                target: edge.target
+            }));
 
-                svg.selectAll("text")
-                    .data(nodes)
-                    .enter().append("text")
-                    .attr("class", "label")
-                    .attr("x", d => d.x)
-                    .attr("y", d => d.y + 5)
-                    .text(d => d.label);
+            // Clear previous
+            svg.selectAll("*").remove();
 
-                // Force simulation for real-time movement
-                const simulation = d3.forceSimulation(nodes)
-                    .force("charge", d3.forceManyBody().strength(-50))
-                    .force("center", d3.forceCenter(width / 2, height / 2))
-                    .force("link", d3.forceLink(edges).id(d => d.id).distance(100).strength(0.1))
-                    .on("tick", () => {
-                        svg.selectAll("line")
-                            .attr("x1", d => nodes.find(n => n.id === d.source)?.x || 0)
-                            .attr("y1", d => nodes.find(n => n.id === d.source)?.y || 0)
-                            .attr("x2", d => nodes.find(n => n.id === d.target)?.x || 0)
-                            .attr("y2", d => nodes.find(n => n.id === d.target)?.y || 0);
+            // Render edges
+            const link = svg.selectAll("line")
+                .data(edges)
+                .enter().append("line")
+                .attr("class", "edge");
 
-                        svg.selectAll("circle")
-                            .attr("cx", d => d.x)
-                            .attr("cy", d => d.y);
+            // Render nodes with mercy color
+            const node = svg.selectAll("circle")
+                .data(nodes)
+                .enter().append("circle")
+                .attr("class", "node")
+                .attr("r", d => d.r)
+                .attr("fill", d => getMercyColor(d.val))
+                .on("mouseover", function(event, d) {
+                    console.log(`Mercy resonance ${d.val}: ${d.description}`);
+                });
 
-                        svg.selectAll("text")
-                            .attr("x", d => d.x)
-                            .attr("y", d => d.y + 5);
-                    });
-            })
-            .catch(error => console.error('Graph load error:', error));  // Silent fallback
+            // Render labels
+            const label = svg.selectAll("text")
+                .data(nodes)
+                .enter().append("text")
+                .attr("class", "label")
+                .text(d => d.label);
+
+            // Force simulation
+            if (simulation) simulation.stop();
+            simulation = d3.forceSimulation(nodes)
+                .force("charge", d3.forceManyBody().strength(-120))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("link", d3.forceLink(edges).id(d => d.id).distance(180).strength(0.6))
+                .on("tick", () => {
+                    link.attr("x1", d => d.source.x)
+                        .attr("y1", d => d.source.y)
+                        .attr("x2", d => d.target.x)
+                        .attr("y2", d => d.target.y);
+
+                    node.attr("cx", d => d.x)
+                        .attr("cy", d => d.y);
+
+                    label.attr("x", d => d.x)
+                          .attr("y", d => d.y + 5);
+                });
+        }
+
+        function loadGraph() {
+            fetch('credo-fork-fiction-waves-christianity-bridge.json?' + new Date().getTime())
+                .then(response => response.json())
+                .then(data => updateGraph(data))
+                .catch(error => console.error('Graph load error:', error));
+        }
+
+        // Initial load
+        loadGraph();
+
+        // Auto-reload loop
+        setInterval(loadGraph, reloadInterval);
     </script>
 </body>
 </html>

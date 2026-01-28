@@ -116,3 +116,26 @@
     </script>
 </body>
 </html>
+
+// In node enter:
+node.on("mouseover", function(event, d) {
+    d3.select("body").append("div")
+        .attr("class", "tooltip")
+        .style("position", "absolute")
+        .style("background", "#333")
+        .style("color", "#fff")
+        .style("padding", "8px")
+        .style("border-radius", "4px")
+        .text(`Resonance ${d.val}: ${d.description}`)
+        .style("left", (event.pageX + 10) + "px")
+        .style("top", (event.pageY - 10) + "px");
+})
+.on("mouseout", () => d3.select(".tooltip").remove())
+.on("click", function(event, d) {
+    console.log(`Trigger ordeal on ${d.label}`);
+    // Future: POST to server triggering ordeal on node.id
+});
+
+// Add .tooltip style in <style>
+.tooltip { pointer-events: none; font: 12px sans-serif; }
+

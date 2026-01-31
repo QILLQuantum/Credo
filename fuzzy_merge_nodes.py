@@ -1,36 +1,71 @@
+# fuzzy_merge_nodes.py - Auto-Bridge with Archetype Naming
+import json
+import os
+from collections import Counter
 
-def fuzzy_merge_nodes(nodes, global_threshold=85):
-    groups = defaultdict(list)
-    for node in nodes:
-        tags = node["properties"].get("tags", [])
-        trad_tag = next((t for t in tags if "tradition" in t.lower() or t in INITIAL_TRADITIONS), None)
-        trad = trad_tag or node.get("name", "").split()[0]
-        groups[trad].append(node)
+GRAPH_FILE = "your-current-fork.json"  # Update to your fork
 
-    merged = []
-    archive = []
+# Predefined archetypes
+ARCHETYPES = {
+    "sacrifice": "Self-Sacrifice for Greater Good",
+    "wisdom": "Quest for Hidden Knowledge",
+    "redemption": "Redemption Through Trial",
+    "prophecy": "Vision of Fate",
+    "force": "Binding Energy of Will"
+}
 
-    # Exclusion list — protected rare traditions
-    RARE_EXCLUDE = [
-        "Dogon", "Hopi", "Inuit", "Basque", "Sedna", "Nommo", "Kachina", "Mari", "Vahagn",
-        "Louhi", "Boldogasszony", "Tengri", "Baiame", "Anansi", "Pele"
-    ]
+def fuzzy_auto_bridge(min_overlap=3):
+    if not os.path.exists(GRAPH_FILE):
+        print("Fork file not found.")
+        return
 
-    for trad, group_nodes in groups.items():
-        group_size = len(group_nodes)
-        threshold = global_threshold
+    with open(GRAPH_FILE, 'r+') as f:
+        data = json.load(f)
+        nodes = data["graph"]["nodes"]
+        added = 0
+        
+        keyword_index = {}
+        for node in nodes:
+            desc = (node["properties"].get("description", "") + " " + node["name"]).lower()
+            words = [w for w in desc.split() if len(w) > 4]
+            keyword_index[node["id"]] = Counter(words)
+        
+        for i, node1 in enumerate(nodes):
+            id1 = node1["id"]
+            keywords1 = keyword_index[id1]
+            for node2 in nodes[i+1:]:
+                id2 = node2["id"]
+                keywords2 = keyword_index[id2]
+                shared = keywords1 & keywords2
+                overlap = sum(shared.values())
+                if overlap >= min_overlap:
+                    # Archetype naming
+                    archetype = "Shared Theme"
+                    for key, name in ARCHETYPES.items():
+                        if key in shared:
+                            archetype = name
+                            break
+                    
+                    edge = {
+                        "source": id1,
+                        "target": id2,
+                        "type": "FuzzyAutoBridge",
+                        "properties": {
+                            "archetype": archetype,
+                            "overlap_count": overlap,
+                            "shared_keywords": list(shared.keys())[:10],
+                            "resonance": round(0.85 + (overlap / 20) * 0.13, 4)
+                        }
+                    }
+                    if not any(e["source"] == edge["source"] and e["target"] == edge["target"] for e in data["graph"]["edges"]):
+                        data["graph"]["edges"].append(edge)
+                        added += 1
+        
+        f.seek(0)
+        json.dump(data, f, indent=2)
+        f.truncate()
+    
+    print(f"Fuzzy merge complete — added {added} bridges (min overlap {min_overlap})")
 
-        # Apply exclusion list first (overrides other thresholds)
-        if any(ex.lower() in trad.lower() for ex in RARE_EXCLUDE):
-            threshold = 99
-            logger.info(f"Excluded rare tradition {trad} — merge disabled (threshold 99)")
-        # Then apply size-based protection
-        elif group_size < 30:
-            threshold = 97
-            logger.debug(f"Rare/small {trad} ({group_size}) → threshold {threshold}")
-        elif group_size < 100:
-            threshold = min(94, global_threshold + 5)
-            logger.debug(f"Small {trad} ({group_size}) → threshold {threshold}")
-
-        # ... rest of the merge loop remains the same
-        # (loop over group_nodes, compare to merged, merge if score >= threshold, etc.)
+if __name__ == "__main__":
+    fuzzy_auto_bridge(min_overlap=3)  # Try 3, 4, or 5

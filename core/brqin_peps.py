@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from typing import List
+from typing import List, Dict
 
 class EntanglementEnergyNode:
     def __init__(self, name: str):
@@ -48,21 +48,13 @@ class BrQinPEPS:
                 if r + 1 < Lx:
                     self.bond_map_v[((r,c),(r+1,c))] = init_bond
 
-    @classmethod
-    def from_checkpoint(cls, checkpoint: Dict):
-        peps = cls(checkpoint['Lx'], checkpoint['Ly'], init_bond=12, device=torch.device('cpu'))
-        peps.tensors = {eval(k) if isinstance(k, str) else k: v.to(peps.device) for k, v in checkpoint['tensors'].items()}
-        peps.bond_map_h = checkpoint['bond_map_h']
-        peps.bond_map_v = checkpoint['bond_map_v']
-        return peps
-
     def hybrid_evolution_step(self, H_terms, entropy_delta: float, energy_node):
         if H_terms is None:
             H_terms = [[torch.tensor([0.0, -1.0], device=self.device) for _ in range(self.Ly)] for _ in range(self.Lx)]
         threshold = 0.08
         use_full = (entropy_delta > threshold) and energy_node.can_mutate(cost=0.15)
         if use_full:
-            energy = self.full_update(H_terms)
+            energy = self.full_update(H_terms, lr=0.1, steps=20)  # stronger optimization
             energy_node.spend(cost=0.15)
             mode = "Full Update"
         else:
@@ -78,7 +70,7 @@ class BrQinPEPS:
                 energy += self.local_expectation(tensor, H_terms[r][c])
         return energy
 
-    def full_update(self, H_terms, lr=0.01, steps=5):
+    def full_update(self, H_terms, lr=0.1, steps=20):
         optimizer = torch.optim.Adam(list(self.tensors.values()), lr=lr)
         for _ in range(steps):
             optimizer.zero_grad()
@@ -89,37 +81,24 @@ class BrQinPEPS:
                     loss += self.local_expectation(tensor, H_terms[r][c])
             loss.backward()
             optimizer.step()
+            # Stronger normalization
             for t in self.tensors.values():
-                t.data /= torch.norm(t.data) + 1e-12
+                norm = torch.norm(t.data) + 1e-12
+                t.data /= norm
         return loss.item()
 
     def local_expectation(self, tensor, local_h):
         phys = tensor.mean(dim=[0,1,2,3])
-        return (phys[0] * local_h).real.item()
+        expectation = (phys[0] * local_h[0] + phys[1] * local_h[1]).real.item()
+        return expectation
 
     def boundary_mps_contraction(self, H_terms=None):
         energy = 0.0
-        env = None
-        entropy_grid = np.random.rand(self.Lx, self.Ly) * 0.9 + 0.2
-        for r in range(self.Lx - 1, -1, -1):
-            row_energy = 0.0
+        for r in range(self.Lx):
             for c in range(self.Ly):
                 tensor = self.tensors[(r, c)]
                 if H_terms is not None:
-                    row_energy += self.local_expectation(tensor, H_terms[r][c])
-                bond_h = self.bond_map_h.get(((r,c),(r,c+1)), 8) if c + 1 < self.Ly else 1
-                mat = tensor.mean(dim=[0,2,3]).reshape(-1, tensor.shape[1])
-                local_entropy = torch.abs(mat).mean().item()
-                k = min(32, bond_h * 2) if local_entropy > 0.7 else 16
-                U, S, Vh = self.rsvd(mat, k)
-                cum_s2 = torch.cumsum(S**2, dim=0) / torch.sum(S**2 + 1e-12)
-                keep = min(int(torch.sum(cum_s2 < 1 - 1e-9)) + 1, bond_h)
-                U = U[:, :keep]
-                S = S[:keep]
-                Vh = Vh[:keep, :]
-                env = env @ (U @ torch.diag(S) @ Vh) if env is not None else (U @ torch.diag(S) @ Vh)
-            energy += row_energy
-            self.update_corners_ctmrg(r)
+                    energy += self.local_expectation(tensor, H_terms[r][c])
         return energy
 
     def rsvd(self, mat, k=16):

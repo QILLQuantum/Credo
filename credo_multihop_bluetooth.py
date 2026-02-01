@@ -6,19 +6,20 @@ import json
 import os
 import time
 import torch
+import random  # ← FIXED: Added missing import
 
 # CONFIG
-DATA_TO_SEND = {"credo_sync": "Multi-hop chain — wisdom ripples"}
-CHAIN_PREFIX = "CredoNode-"  # Devices advertise with this name prefix
+DATA_TO_SEND = {"credo_sync": "Multi-hop chain — wisdom hops eternal"}
+CHAIN_PREFIX = "CredoNode-"  # Devices advertise with this name prefix for chain
 CUSTOM_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"  # Example (use custom)
 CUSTOM_CHAR_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 STORAGE_FOLDER = "multihop_received"
 os.makedirs(STORAGE_FOLDER, exist_ok=True)
 
 # Piezo energy sim
-VIBRATION_POWER_MW = 0.5
+VIBRATION_POWER_MW = 0.5  # Average harvest from motion (milliwatts)
 EFFICIENCY = 0.15
-TX_ENERGY_MJ = 0.05
+TX_ENERGY_MJ = 0.05  # Cost per hop transmit (millijoules, low-power mode)
 
 class EnergyNode:
     def __init__(self):
@@ -40,7 +41,7 @@ class EnergyNode:
 
 # BrQin key per hop
 def brqin_key(hop):
-    torch.manual_seed(42 + hop)
+    torch.manual_seed(42 + hop * 100)
     N = 12
     state = torch.randn(N, dtype=torch.complex64)
     state = state / state.norm()
@@ -53,11 +54,11 @@ def brqin_key(hop):
         state.data = state.data / state.data.norm()
     noise = state.real.numpy()
     key_bytes = b''.join(int(abs(n) * 1000) % 256 .to_bytes(1, 'big') for n in noise[:32])
-    return Fernet(Fernet.generate_key())  # Mix for PoC
+    return Fernet(Fernet.generate_key())  # PoC mix
 
 async def multi_hop_transmitter():
     node = EnergyNode()
-    print("Transmitter — charging...")
+    print("Transmitter — charging from motion...")
     while not node.can_transmit():
         node.harvest()
         await asyncio.sleep(1)
@@ -65,22 +66,17 @@ async def multi_hop_transmitter():
     key = brqin_key(1)
     encrypted = key.encrypt(json.dumps(DATA_TO_SEND).encode())
     
-    print("Scanning for chain...")
+    print("Scanning for chain nodes...")
     devices = await BleakScanner.discover(timeout=10.0)
     chain = [d for d in devices if CHAIN_PREFIX in (d.name or "")]
     if len(chain) < 1:
         print("No chain nodes found.")
         return
     
-    print(f"Chain length: {len(chain)} — starting multi-hop...")
-    current_payload = encrypted
-    for i, device in enumerate(chain):
-        print(f"Hop {i+1} to {device.name or device.address}")
-        async with BleakClient(device.address) as client:
-            # Simulated write (real GATT in production)
-            print(f"Hop {i+1} complete (simulated)")
-    
-    print("Multi-hop chain finished — data synced")
+    print(f"Found {len(chain)} nodes — starting multi-hop...")
+    # Simulate write to first node (real GATT in production)
+    print("Multi-hop started — data sent (simulated chain)")
+    # In real: write encrypted to first node's characteristic
 
 async def chain_receiver():
     print("Receiver — listening for chain...")
@@ -91,7 +87,7 @@ async def chain_receiver():
         await asyncio.sleep(5)
 
 async def main():
-    mode = input("Mode — (t)ransmitter or (r)eceiver/relay: ").lower()
+    mode = input("Mode — (t)ransmitter or (r)eceiver: ").lower()
     if mode == "t":
         await multi_hop_transmitter()
     else:

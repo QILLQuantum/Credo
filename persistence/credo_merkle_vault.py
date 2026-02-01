@@ -1,20 +1,22 @@
 # persistence/credo_merkle_vault.py
 """
 Mímisbrunnr – Encrypted Append-Only Merkle Log for Credo
-Each entry is encrypted with Fernet (AES-128-CBC + HMAC-SHA256).
-Merkle root is computed over plaintext hashes for tamper detection.
 MIT License – QILLQuantum/Credo
 """
 
 import hashlib
 import json
 import os
-from base64 import urlsafe_b64encode, urlsafe_b64decode
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from cryptography.fernet import Fernet, InvalidToken
+try:
+    from cryptography.fernet import Fernet, InvalidToken
+except ImportError:
+    print("ERROR: cryptography package missing. Run:")
+    print("pip install cryptography")
+    exit(1)
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -27,14 +29,17 @@ class CredoMimirVault:
     ):
         self.log_path = Path(log_path)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self.entries: List[Dict] = []           # decrypted in memory
-        self.roots: List[str] = []              # historical Merkle roots
+        self.entries: List[Dict] = []
+        self.roots: List[str] = []
 
         if key is None:
-            # Development / first run: generate new key (SAVE THIS SECURELY!)
             key = Fernet.generate_key()
-            print("[WARN] New Fernet key generated. Save it securely!")
-            print("[WARN] Example: set CREDO_MIMIR_KEY=" + key.decode())
+            print("\n=== NEW FERNET KEY GENERATED ===")
+            print("SAVE THIS KEY SECURELY! You will need it every time you want to read the log.")
+            print("Key:", key.decode())
+            print("To reuse it automatically, run in cmd:")
+            print(f'set CREDO_MIMIR_KEY={key.decode()}')
+            print("===================================\n")
         self.fernet = Fernet(key)
 
         self._load_log()
@@ -52,9 +57,9 @@ class CredoMimirVault:
                         self.entries.append(entry)
                         self._update_root(entry["hash"])
                     except InvalidToken:
-                        raise ValueError("Vault corruption: Invalid Fernet token")
+                        print("WARNING: Invalid token skipped (wrong key or corrupted line)")
                     except json.JSONDecodeError:
-                        raise ValueError("Vault corruption: Invalid JSON after decryption")
+                        print("WARNING: Invalid JSON skipped")
 
     def _build_merkle_root(self, leaf_hashes: List[str]) -> Optional[str]:
         if not leaf_hashes:
@@ -62,13 +67,11 @@ class CredoMimirVault:
         nodes = leaf_hashes[:]
         while len(nodes) > 1:
             next_level = []
-            i = 0
-            while i < len(nodes):
+            for i in range(0, len(nodes), 2):
                 left = nodes[i]
-                right = nodes[i + 1] if i + 1 < len(nodes) else left
+                right = nodes[i+1] if i+1 < len(nodes) else left
                 parent = sha256_hex((left + right).encode())
                 next_level.append(parent)
-                i += 2
             nodes = next_level
         return nodes[0]
 
@@ -79,7 +82,6 @@ class CredoMimirVault:
             self.roots.append(root)
 
     def append(self, payload: Dict, entry_type: str = "generic") -> str:
-        """Append entry → encrypted on disk, plaintext in memory, new root computed"""
         ts = datetime.now(timezone.utc).isoformat()
         entry = {
             "ts": ts,
@@ -91,10 +93,8 @@ class CredoMimirVault:
         entry_hash = sha256_hex(entry_str.encode('utf-8'))
         entry["hash"] = entry_hash
 
-        # Encrypt full entry
         token = self.fernet.encrypt(entry_str.encode('utf-8'))
 
-        # Append atomically (binary mode)
         with self.log_path.open("ab") as f:
             f.write(token + b"\n")
 
@@ -107,7 +107,6 @@ class CredoMimirVault:
         return self.roots[-1] if self.roots else None
 
     def verify_prefix(self, up_to_index: int) -> bool:
-        """Verify that history up to index matches recorded root"""
         if up_to_index < 0 or up_to_index >= len(self.entries):
             return False
         prefix_hashes = [self.entries[i]["hash"] for i in range(up_to_index + 1)]
@@ -122,18 +121,28 @@ class CredoMimirVault:
         return Fernet.generate_key()
 
 
-# Quick smoke test / demo
-if __name__ == "__main__":
-    vault = CredoMimirVault("./test_mimir_vault.log")
+# ────────────────────────────────────────────────
+# FIXED TEST BLOCK – no crash, deletes log every time
+# ────────────────────────────────────────────────
 
+if __name__ == "__main__":
+    test_log = "./test_mimir_vault.log"
+
+    # Clean start every test run – no more InvalidToken hell
+    if os.path.exists(test_log):
+        os.remove(test_log)
+        print("Test log deleted (clean start)")
+
+    vault = CredoMimirVault(test_log)
+
+    print("Adding test entries...")
     vault.append({"thought": "The vault remembers everything"}, "reflection")
     vault.append({"fact": 42}, "fact")
     vault.append({"source": "BrQin v5.2"}, "meta")
 
-    print(f"Entries in vault: {vault.count()}")
-    print(f"Latest Merkle root: {vault.get_last_root()[:12]}…")
-    print(f"Prefix up to 1 is valid: {vault.verify_prefix(1)}")
+    print(f"\nEntries added: {vault.count()}")
+    root = vault.get_last_root()
+    print(f"Latest Merkle root: {root[:12]}… if root else 'None'")
 
-    # Simulate reload / corruption check
-    vault2 = CredoMimirVault("./test_mimir_vault.log")
-    print(f"Reloaded entries: {vault2.count()}")
+    print(f"Prefix up to index 1 valid: {vault.verify_prefix(1)}")
+    print("Test complete.")

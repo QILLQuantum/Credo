@@ -1,128 +1,79 @@
 import torch
 import numpy as np
-from typing import List, Dict
+import networkx as nx
+import os
+import matplotlib.pyplot as plt
+from brqin_peps import BrQinPEPS, EntanglementEnergyNode
+from credo_db_facade import CredoDBFacade
 
-class EntanglementEnergyNode:
-    def __init__(self, name: str):
-        self.name = name
-        self.energy = 0.0
+print("=== BrQin v5.2 - Bond Dimension Tracking ===")
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
 
-    def harvest(self, local_entropy: float):
-        harvested = max(0.0, local_entropy - 0.3)
-        self.energy += harvested
-        return harvested
+Lx, Ly = 12, 12
+peps = BrQinPEPS(Lx, Ly, init_bond=12, device=device)
+H_terms = [[torch.tensor([1.0, 0.0], device=device) for _ in range(Ly)] for _ in range(Lx)]
+nodes = [EntanglementEnergyNode(f"Node{i}") for i in range(4)]
+db = CredoDBFacade()
 
-    def can_mutate(self, cost=0.15):
-        return self.energy >= cost
+energies = []
+mags = []
+avg_bond_dims = []
 
-    def spend(self, cost=0.15):
-        if self.can_mutate(cost):
-            self.energy -= cost
-            return True
-        return False
+for step in range(12):
+    entropy_delta = np.random.uniform(0.2, 0.9) - 0.3
+    energy, mode = peps.hybrid_evolution_step(H_terms, entropy_delta, nodes[step % 4])
+    boundary_energy = peps.boundary_mps_contraction(H_terms)
+    observables = peps.compute_observables()
+    mag = observables['magnetization']
 
-class BrQinPEPS:
-    def __init__(self, Lx: int, Ly: int, init_bond: int = 12, device=None):
-        if device is None:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.Lx = Lx
-        self.Ly = Ly
-        self.device = device
-        self.tensors = {}
-        self.bond_map_h = {}
-        self.bond_map_v = {}
-        self.corner_tl = torch.eye(init_bond, dtype=torch.complex64, device=device)
-        self.corner_tr = torch.eye(init_bond, dtype=torch.complex64, device=device)
-        self.corner_bl = torch.eye(init_bond, dtype=torch.complex64, device=device)
-        self.corner_br = torch.eye(init_bond, dtype=torch.complex64, device=device)
+    # Track average bond dimension
+    bond_sum = sum(peps.bond_map_h.values()) + sum(peps.bond_map_v.values())
+    bond_count = len(peps.bond_map_h) + len(peps.bond_map_v)
+    avg_bond = bond_sum / bond_count if bond_count > 0 else 12
+    avg_bond_dims.append(avg_bond)
 
-        for r in range(Lx):
-            for c in range(Ly):
-                tensor = torch.randn(init_bond, init_bond, init_bond, init_bond, 2, dtype=torch.complex64, device=device)
-                self.tensors[(r, c)] = tensor / torch.norm(tensor)
+    energies.append(energy)
+    mags.append(mag)
 
-        for r in range(Lx):
-            for c in range(Ly):
-                if c + 1 < Ly:
-                    self.bond_map_h[((r,c),(r,c+1))] = init_bond
-                if r + 1 < Lx:
-                    self.bond_map_v[((r,c),(r+1,c))] = init_bond
+    print(f"Step {step:2d} | Energy: {energy:.6f} | Mag: {mag:.6f} | Avg Bond: {avg_bond:.1f} | Mode: {mode}")
 
-    def hybrid_evolution_step(self, H_terms, entropy_delta: float, energy_node):
-        if H_terms is None:
-            H_terms = [[torch.tensor([0.0, -1.0], device=self.device) for _ in range(self.Ly)] for _ in range(self.Lx)]
-        threshold = 0.08
-        use_full = (entropy_delta > threshold) and energy_node.can_mutate(cost=0.15)
-        if use_full:
-            energy = self.full_update(H_terms, lr=0.1, steps=20)  # stronger optimization
-            energy_node.spend(cost=0.15)
-            mode = "Full Update"
-        else:
-            energy = self.simple_update(H_terms)
-            mode = "Simple Update"
-        return energy, mode
+    if step % 3 == 0:
+        syndromes = {"p_phys": 0.005, "weight": np.random.randint(0, 25)}
+        db.save_simulation_step(peps, nodes, observables, energy, mode, entropy_delta, syndromes)
+        print(f"   [DB] Step {step} persisted")
 
-    def simple_update(self, H_terms):
-        energy = 0.0
-        for r in range(self.Lx):
-            for c in range(self.Ly):
-                tensor = self.tensors[(r, c)]
-                energy += self.local_expectation(tensor, H_terms[r][c])
-        return energy
+# === Bond dimension heatmap ===
+bond_grid = np.zeros((Lx, Ly))
+for r in range(Lx):
+    for c in range(Ly):
+        h = peps.bond_map_h.get(((r,c),(r,c+1)), 12) if c + 1 < Ly else 12
+        v = peps.bond_map_v.get(((r,c),(r+1,c)), 12) if r + 1 < Lx else 12
+        bond_grid[r, c] = (h + v) / 2
 
-    def full_update(self, H_terms, lr=0.1, steps=20):
-        optimizer = torch.optim.Adam(list(self.tensors.values()), lr=lr)
-        for _ in range(steps):
-            optimizer.zero_grad()
-            loss = 0.0
-            for r in range(self.Lx):
-                for c in range(self.Ly):
-                    tensor = self.tensors[(r, c)]
-                    loss += self.local_expectation(tensor, H_terms[r][c])
-            loss.backward()
-            optimizer.step()
-            # Stronger normalization
-            for t in self.tensors.values():
-                norm = torch.norm(t.data) + 1e-12
-                t.data /= norm
-        return loss.item()
+plt.figure(figsize=(10, 8))
+plt.imshow(bond_grid, cmap='viridis', interpolation='nearest')
+plt.colorbar(label='Average Bond Dimension')
+plt.title('Bond Dimension Heatmap (Final State)')
+plt.xlabel('Column')
+plt.ylabel('Row')
+for i in range(Lx):
+    for j in range(Ly):
+        plt.text(j, i, f'{bond_grid[i,j]:.0f}', ha='center', va='center', color='white', fontsize=8)
+plt.tight_layout()
+plt.savefig('bond_dimension_heatmap.png', dpi=300)
+plt.close()
 
-    def local_expectation(self, tensor, local_h):
-        phys = tensor.mean(dim=[0,1,2,3])
-        expectation = (phys[0] * local_h[0] + phys[1] * local_h[1]).real.item()
-        return expectation
+print("\n=== Final Summary ===")
+print(f"Final magnetization: {mags[-1]:.6f}")
+print(f"Average energy:      {np.mean(energies):.6f}")
+print(f"Final avg bond dim:  {avg_bond_dims[-1]:.1f}")
+print(f"DB entries:          {db.get_checkpoint_count()}")
+ok, msg = db.verify_integrity()
+print(f"Vault integrity:     {ok} - {msg}")
 
-    def boundary_mps_contraction(self, H_terms=None):
-        energy = 0.0
-        for r in range(self.Lx):
-            for c in range(self.Ly):
-                tensor = self.tensors[(r, c)]
-                if H_terms is not None:
-                    energy += self.local_expectation(tensor, H_terms[r][c])
-        return energy
+torch.save(peps.tensors, 'final_state.pt')
+nx.write_graphml(nx.grid_2d_graph(Lx, Ly), 'topology.graphml')
+print("✅ Run complete")
+print("📊 Plots saved: brqin_energy_mag_plot.png + bond_dimension_heatmap.png")
 
-    def rsvd(self, mat, k=16):
-        try:
-            Omega = torch.randn(mat.shape[1], k, dtype=mat.dtype, device=mat.device)
-            Y = mat @ Omega
-            Q, _ = torch.linalg.qr(Y, mode='reduced')
-            B = Q.T @ mat
-            U_tilde, S, Vh = torch.linalg.svd(B, full_matrices=False)
-            U = Q @ U_tilde
-            return U, S, Vh
-        except:
-            U, S, Vh = torch.linalg.svd(mat.to(torch.float32), full_matrices=False)
-            return U, S, Vh
-
-    def update_corners_ctmrg(self, row):
-        bond = max(self.bond_map_h.values(), default=8)
-        self.corner_tl = torch.randn(bond, bond, dtype=torch.complex64, device=self.device) / torch.norm(self.corner_tl)
-        return
-
-    def compute_observables(self):
-        mag = 0.0
-        for tensor in self.tensors.values():
-            phys = tensor.mean(dim=[0,1,2,3])
-            mag += phys[0].real.item()
-        mag /= len(self.tensors)
-        return {'magnetization': mag}

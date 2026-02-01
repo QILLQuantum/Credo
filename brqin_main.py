@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import networkx as nx
 import os
+import matplotlib.pyplot as plt
 from brqin_peps import BrQinPEPS, EntanglementEnergyNode
 from credo_db_facade import CredoDBFacade
 
@@ -35,6 +36,29 @@ for step in range(12):
         db.save_simulation_step(peps, nodes, observables, energy, mode, entropy_delta, syndromes)
         print(f"   [DB] Step {step} persisted | Logical err est: {syndromes['p_phys']:.3f}")
 
+# === Plot ===
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+plt.plot(energies, marker='o', linewidth=2, label='Energy')
+plt.title('Energy over Steps')
+plt.xlabel('Step')
+plt.ylabel('Energy')
+plt.grid(True)
+plt.legend()
+
+plt.subplot(1, 2, 2)
+plt.plot(mags, marker='o', color='orange', linewidth=2, label='Magnetization')
+plt.title('Magnetization over Steps')
+plt.xlabel('Step')
+plt.ylabel('Magnetization')
+plt.grid(True)
+plt.legend()
+
+plt.tight_layout()
+plt.savefig('brqin_energy_mag_plot.png', dpi=300)
+plt.show()
+
 print("\n=== Final Summary ===")
 print(f"Final magnetization: {mags[-1]:.6f}")
 print(f"Average energy:      {np.mean(energies):.6f}")
@@ -46,3 +70,4 @@ print(f"Vault integrity:     {ok} - {msg}")
 torch.save(peps.tensors, 'final_state.pt')
 nx.write_graphml(nx.grid_2d_graph(Lx, Ly), 'topology.graphml')
 print("✅ Run complete")
+print("📊 Plot saved as 'brqin_energy_mag_plot.png'")

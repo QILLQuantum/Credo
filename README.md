@@ -1,4 +1,4 @@
-# BrQin Demo - Final Version
+# BrQin Demo - (developing)
 
 A self-contained, clean demonstration of adaptive bond growth in PEPS with energy trends, VQE, logical qubits, surface code, and more.
 
@@ -16,4 +16,5 @@ Various other plots
 
 ## Usage
 ```bash
+
 python brqin_final.py --steps 20 --Lx 16 --Ly 16 --bond 16

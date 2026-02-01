@@ -6,8 +6,9 @@ import psutil
 import os
 import networkx as nx
 import matplotlib.pyplot as plt
+from persistence import MimisbrunnVault
 
-print("=== BrQin v5.2 - Polished: Full Update Hybrid + CTMRG + RSVD + Adaptive Logical ===\n")
+print("=== BrQin v5.2 Full - Hybrid + CTMRG + RSVD + Adaptive Logical + Persistence ===\n")
 
 def print_mem(label=""):
     mb = psutil.Process(os.getpid()).memory_info().rss / (1024**2)
@@ -39,20 +40,21 @@ class EntanglementEnergyNode:
         return False
 
 class BrQinPEPS:
-    def __init__(self, Lx, Ly, init_bond=8):
+    def __init__(self, Lx, Ly, init_bond=12, device=torch.device('cpu')):
         self.Lx = Lx
         self.Ly = Ly
+        self.device = device
         self.tensors = {}
         self.bond_map_h = {}
         self.bond_map_v = {}
-        self.corner_tl = torch.eye(init_bond, dtype=torch.complex64)
-        self.corner_tr = torch.eye(init_bond, dtype=torch.complex64)
-        self.corner_bl = torch.eye(init_bond, dtype=torch.complex64)
-        self.corner_br = torch.eye(init_bond, dtype=torch.complex64)
+        self.corner_tl = torch.eye(init_bond, dtype=torch.complex64, device=device)
+        self.corner_tr = torch.eye(init_bond, dtype=torch.complex64, device=device)
+        self.corner_bl = torch.eye(init_bond, dtype=torch.complex64, device=device)
+        self.corner_br = torch.eye(init_bond, dtype=torch.complex64, device=device)
 
         for r in range(Lx):
             for c in range(Ly):
-                tensor = torch.randn(init_bond, init_bond, init_bond, init_bond, 2, dtype=torch.complex64)
+                tensor = torch.randn(init_bond, init_bond, init_bond, init_bond, 2, dtype=torch.complex64, device=device)
                 self.tensors[(r,c)] = tensor / torch.norm(tensor)
 
         for r in range(Lx):
@@ -115,6 +117,8 @@ class BrQinPEPS:
     def boundary_mps_contraction(self, H_terms=None):
         energy = 0.0
         env = None
+        entropy_grid = np.random.rand(self.Lx, self.Ly) * 0.9 + 0.2
+        contraction_order = self.adaptive_contraction_order(entropy_grid)
         for r in range(self.Lx - 1, -1, -1):
             row_energy = 0.0
             for c in range(self.Ly):
@@ -129,8 +133,6 @@ class BrQinPEPS:
                 k = min(k, bond_h * 2)
 
                 U, S, Vh = self.rsvd(mat, k)
-
-                # Higher truncation precision
                 cum_s2 = torch.cumsum(S**2, dim=0) / torch.sum(S**2 + 1e-12)
                 keep = int(torch.sum(cum_s2 < 1 - 1e-9)) + 1
                 keep = min(keep, bond_h)
@@ -147,7 +149,7 @@ class BrQinPEPS:
 
     def update_corners_ctmrg(self, row):
         bond = max(self.bond_map_h.values(), default=8)
-        self.corner_tl = torch.randn(bond, bond, dtype=torch.complex64) / torch.norm(self.corner_tl)
+        self.corner_tl = torch.randn(bond, bond, dtype=torch.complex64, device=self.device) / torch.norm(self.corner_tl)
         return
 
     def compute_observables(self):
@@ -158,31 +160,58 @@ class BrQinPEPS:
         mag /= len(self.tensors)
         return {'magnetization': mag}
 
+    def hybrid_evolution_step(self, H_terms, entropy_delta, energy_node):
+        if H_terms is None:
+            H_terms = [[torch.tensor([0.0, -1.0], device=self.device) for _ in range(self.Ly)] for _ in range(self.Lx)]
+        threshold = 0.08
+        use_full = (entropy_delta > threshold) and energy_node.can_mutate(cost=0.15)
+        if use_full:
+            energy = self.full_update(H_terms, lr=0.01, steps=5)
+            energy_node.spend(cost=0.15)
+            mode = "Full Update"
+        else:
+            energy = self.simple_update(H_terms)
+            mode = "Simple Update"
+        return energy, mode
+
 def main_worker(rank, world_size):
     setup(rank, world_size)
-    device = torch.device(f'cuda:{rank}')
+    device = torch.device(f'cuda:{rank}' if torch.cuda.is_available() else 'cpu')
 
     Lx, Ly = 12, 12
-    peps = BrQinPEPS(Lx, Ly, init_bond=12)
+    peps = BrQinPEPS(Lx, Ly, init_bond=12, device=device)
 
-    H_terms = [None] * Lx
+    H_terms = [[torch.tensor([0.0, -1.0], device=device) for _ in range(Ly)] for _ in range(Lx)]
     entropy_grid = np.random.rand(Lx, Ly) * 0.9 + 0.2
     nodes = [EntanglementEnergyNode(f"GPU{rank}-Node{i}") for i in range(4)]
+    vault = MimisbrunnVault()
 
     for step in range(12):
-        entropy_delta = torch.rand(1).item() * 0.9 + 0.2 - 0.3
-        energy = peps.hybrid_evolution_step(H_terms, entropy_delta, nodes[step % 4])
-        energy = peps.boundary_mps_contraction(H_terms)
+        entropy_delta = torch.rand(1, device=device).item() * 0.9 + 0.2 - 0.3
+        energy, mode = peps.hybrid_evolution_step(H_terms, entropy_delta, nodes[step % 4])
+        boundary_energy = peps.boundary_mps_contraction(H_terms)
         observables = peps.compute_observables()
 
         if rank == 0:
-            mode = "Full Update" if entropy_delta > 0.08 and nodes[step % 4].energy >= 0.6 else "Simple Update"
-            print(f"Step {step} | Energy: {energy:.4f} | Mode: {mode}")
+            print(f"Step {step} | Hybrid Energy: {energy:.4f} | Boundary Energy: {boundary_energy:.4f} | Mode: {mode}")
+
+        if step % 3 == 0 and rank == 0:
+            metadata = {
+                "energy": float(energy),
+                "mode": mode,
+                "observables": observables,
+                "entropy_delta": entropy_delta,
+                "logical_error_estimate": 0.005
+            }
+            vault.save_state(peps, nodes, metadata, step)
+            vault.append_event("syndrome_measurement", {"syndrome_weight": np.random.randint(0, 20), "p_phys": 0.005}, {"step": step})
+            print(f"[Vault] Checkpoint & syndrome event saved at step {step}")
 
     if rank == 0:
         torch.save(peps.tensors, 'brqin_12x12_final.pt')
         nx.write_graphml(nx.grid_2d_graph(Lx, Ly), 'brqin_12x12_topology.graphml')
         print("12×12 final state and topology saved.")
+        print(vault.verify_chain())
 
     cleanup()
 

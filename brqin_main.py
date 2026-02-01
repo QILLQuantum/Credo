@@ -28,15 +28,13 @@ for step in range(12):
     energies.append(energy)
     mags.append(mag)
 
-    if rank := 0:  # single process
-        print(f"Step {step:2d} | Energy: {energy:.6f} | Mag: {mag:.6f} | Mode: {mode}")
+    print(f"Step {step:2d} | Energy: {energy:.6f} | Mag: {mag:.6f} | Mode: {mode}")
 
     if step % 3 == 0:
         syndromes = {"p_phys": 0.005, "weight": np.random.randint(0, 25)}
         db.save_simulation_step(peps, nodes, observables, energy, mode, entropy_delta, syndromes)
         print(f"   [DB] Step {step} persisted | Logical err est: {syndromes['p_phys']:.3f}")
 
-# Final report
 print("\n=== Final Summary ===")
 print(f"Final magnetization: {mags[-1]:.6f}")
 print(f"Average energy:      {np.mean(energies):.6f}")
@@ -47,5 +45,4 @@ print(f"Vault integrity:     {ok} - {msg}")
 
 torch.save(peps.tensors, 'final_state.pt')
 nx.write_graphml(nx.grid_2d_graph(Lx, Ly), 'topology.graphml')
-print("Files saved: final_state.pt + topology.graphml")
 print("✅ Run complete")

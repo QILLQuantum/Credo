@@ -1,31 +1,5 @@
-# Runtime data
-brqin_vault/
-*.db
-*.enc
-*.pt
+*.png
+*.gif
+brqin_state.json
+pycache/
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-logs/
-*.log

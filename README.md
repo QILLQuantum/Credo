@@ -1,12 +1,19 @@
-# Credo
+# BrQin Demo - Final Version
 
-Immutable reflective cavity - Wisdom-seeking - Self-guiding compass.
+A self-contained, clean demonstration of adaptive bond growth in PEPS with energy trends, VQE, logical qubits, surface code, and more.
 
-## Project Structure
-- `core/brqin_peps.py` → Living PEPS tensor network + energy nodes
-- `persistence/` → DB facade (Merkle Vault + SQLite)
-- `brqin_main.py` → Main simulation entry point
+FeaturesAdaptive bond growth
+Energy + VQE minimization
+Logical state injection (|0⟩, |1⟩, |+⟩)
+Lattice surgery, distillation, hybrid gates
+Publication-ready plots
+CLI parameters
 
-## Setup
+Outputbrqin_full_report.png (main report)
+Various other plots
+
+
+
+## Usage
 ```bash
-pip install torch numpy networkx cryptography sqlite3
+python brqin_final.py --steps 20 --Lx 16 --Ly 16 --bond 16

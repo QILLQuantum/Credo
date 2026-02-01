@@ -6,28 +6,19 @@ import matplotlib.pyplot as plt
 from brqin_peps import BrQinPEPS, EntanglementEnergyNode
 from credo_db_facade import CredoDBFacade
 
-print("=== BrQin v5.2 - Single Process Mode with Ising Hamiltonian ===")
+print("=== BrQin v5.2 - Bond Dimension Heatmap + Adaptive Growth ===")
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
 Lx, Ly = 12, 12
 peps = BrQinPEPS(Lx, Ly, init_bond=12, device=device)
+H_terms = [[torch.tensor([1.0, 0.0], device=device) for _ in range(Ly)] for _ in range(Lx)]
 nodes = [EntanglementEnergyNode(f"Node{i}") for i in range(4)]
 db = CredoDBFacade()
 
-# Simple Ising Hamiltonian
-J = 1.0
-h = 0.5
-H_terms = []
-for r in range(Lx):
-    row = []
-    for c in range(Ly):
-        local_h = torch.tensor([h, 0.0], device=device)
-        row.append(local_h)
-    H_terms.append(row)
-
 energies = []
 mags = []
+bond_avgs = []
 
 for step in range(12):
     entropy_delta = np.random.uniform(0.2, 0.9) - 0.3
@@ -36,42 +27,50 @@ for step in range(12):
     observables = peps.compute_observables()
     mag = observables['magnetization']
 
+    # Adaptive bond growth
+    peps.adaptive_bond_growth(nodes[step % 4])
+
+    # Track average bond dimension
+    total_bond = sum(peps.bond_map_h.values()) + sum(peps.bond_map_v.values())
+    total_bonds = len(peps.bond_map_h) + len(peps.bond_map_v)
+    avg_bond = total_bond / total_bonds if total_bonds > 0 else 12
+    bond_avgs.append(avg_bond)
+
     energies.append(energy)
     mags.append(mag)
 
-    print(f"Step {step:2d} | Energy: {energy:.6f} | Mag: {mag:.6f} | Mode: {mode}")
+    print(f"Step {step:2d} | Energy: {energy:.6f} | Mag: {mag:.6f} | Avg Bond: {avg_bond:.1f} | Mode: {mode}")
 
     if step % 3 == 0:
         syndromes = {"p_phys": 0.005, "weight": np.random.randint(0, 25)}
         db.save_simulation_step(peps, nodes, observables, energy, mode, entropy_delta, syndromes)
-        print(f"   [DB] Step {step} persisted | Logical err est: {syndromes['p_phys']:.3f}")
+        print(f"   [DB] Step {step} persisted")
 
-# Plot saved automatically
-plt.figure(figsize=(12, 5))
-plt.subplot(1, 2, 1)
-plt.plot(energies, marker='o', linewidth=2, label='Energy')
-plt.title('Energy over Steps (Ising)')
-plt.xlabel('Step')
-plt.ylabel('Energy')
-plt.grid(True)
-plt.legend()
+# Bond dimension heatmap
+bond_grid = np.zeros((Lx, Ly))
+for r in range(Lx):
+    for c in range(Ly):
+        h = peps.bond_map_h.get(((r,c),(r,c+1)), 12) if c + 1 < Ly else 12
+        v = peps.bond_map_v.get(((r,c),(r+1,c)), 12) if r + 1 < Lx else 12
+        bond_grid[r, c] = (h + v) / 2
 
-plt.subplot(1, 2, 2)
-plt.plot(mags, marker='o', color='orange', linewidth=2, label='Magnetization')
-plt.title('Magnetization over Steps')
-plt.xlabel('Step')
-plt.ylabel('Magnetization')
-plt.grid(True)
-plt.legend()
-
+plt.figure(figsize=(10, 8))
+plt.imshow(bond_grid, cmap='viridis', interpolation='nearest')
+plt.colorbar(label='Average Bond Dimension')
+plt.title('Final Bond Dimension Heatmap')
+plt.xlabel('Column')
+plt.ylabel('Row')
+for i in range(Lx):
+    for j in range(Ly):
+        plt.text(j, i, f'{bond_grid[i,j]:.0f}', ha='center', va='center', color='white', fontsize=9)
 plt.tight_layout()
-plt.savefig('brqin_energy_mag_plot.png', dpi=300)
+plt.savefig('bond_dimension_heatmap.png', dpi=300)
 plt.close()
 
 print("\n=== Final Summary ===")
 print(f"Final magnetization: {mags[-1]:.6f}")
 print(f"Average energy:      {np.mean(energies):.6f}")
-print(f"Energy trend:        {energies[-1] - energies[0]:.6f}")
+print(f"Final avg bond dim:  {bond_avgs[-1]:.1f}")
 print(f"DB entries:          {db.get_checkpoint_count()}")
 ok, msg = db.verify_integrity()
 print(f"Vault integrity:     {ok} - {msg}")
@@ -79,4 +78,4 @@ print(f"Vault integrity:     {ok} - {msg}")
 torch.save(peps.tensors, 'final_state.pt')
 nx.write_graphml(nx.grid_2d_graph(Lx, Ly), 'topology.graphml')
 print("✅ Run complete")
-print("📊 Plot saved as 'brqin_energy_mag_plot.png'")
+print("📊 Saved: bond_dimension_heatmap.png")

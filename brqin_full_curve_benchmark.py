@@ -5,9 +5,9 @@ from tqdm import tqdm
 import time
 import csv
 
-print("=== BrQin Monte Carlo Logical Error Benchmark (100,000 trials, d=3,5,7,9) ===")
+print("=== BrQin Full Curve Logical Error Rate Benchmark ===")
 
-class BrQinMCBenchmark:
+class BrQinFullCurveBenchmark:
     def __init__(self):
         self.code_distance = 5
 
@@ -36,9 +36,13 @@ class BrQinMCBenchmark:
                 error_count += 1
         return error_count / trials
 
-    def run_benchmark(self, p_phys_values=None, trials=100000):
-        if p_phys_values is None:
-            p_phys_values = np.linspace(0.001, 0.025, 12)
+    def run_full_curves(self, trials=100000):
+        # Dense sampling for full curves
+        p_phys_values = np.concatenate([
+            np.linspace(0.0005, 0.005, 12),
+            np.linspace(0.0055, 0.015, 20),
+            np.linspace(0.016, 0.03, 12)
+        ])
 
         distances = [3, 5, 7, 9]
         results = {}
@@ -54,10 +58,10 @@ class BrQinMCBenchmark:
             results[d] = rates
 
         total_time = time.time() - total_start
-        print(f"\nTotal time: {total_time:.1f} seconds ({total_time/60:.1f} minutes)")
+        print(f"\nTotal time: {total_time:.1f} seconds")
 
         # Save CSV
-        with open('brqin_mc_d3_d5_d7_d9_100k.csv', 'w', newline='') as f:
+        with open('brqin_full_curve_results.csv', 'w', newline='') as f:
             writer = csv.writer(f)
             header = ['p_phys'] + [f'd={d}' for d in distances]
             writer.writerow(header)
@@ -65,34 +69,30 @@ class BrQinMCBenchmark:
                 row = [p] + [results[d][i] for d in distances]
                 writer.writerow(row)
 
-        # Plot
+        # Plot full curves
         plt.figure(figsize=(10, 7))
         colors = ['blue', 'green', 'red', 'purple']
         for i, d in enumerate(distances):
             plt.plot(p_phys_values, results[d], marker='o', color=colors[i], linewidth=2.5, label=f'd = {d}')
 
         plt.axvline(x=0.0105, color='black', linestyle='--', label='Threshold ≈ 1.05%')
-        plt.title(f'Logical Error Rate vs Physical Error Rate\n(100,000 Trials per Point)')
+        plt.title(f'Full Logical Error Rate Curves\n(100,000 Trials per Point)')
         plt.xlabel('Physical Error Rate (p_phys)')
         plt.ylabel('Logical Error Rate')
         plt.grid(True)
         plt.legend()
-        plt.savefig('logical_error_vs_pphys_d3_d5_d7_d9_100k.png', dpi=400, bbox_inches='tight')
+        plt.savefig('full_logical_error_curves.png', dpi=400, bbox_inches='tight')
         plt.close()
 
-        print("📊 Results saved to 'brqin_mc_d3_d5_d7_d9_100k.csv'")
-        print("📊 High-res plot saved as 'logical_error_vs_pphys_d3_d5_d7_d9_100k.png'")
+        print("📊 Full curve results saved to 'brqin_full_curve_results.csv'")
+        print("📊 High-res full curves plot saved as 'full_logical_error_curves.png'")
 
         return results
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="BrQin Monte Carlo Benchmark")
+    parser = argparse.ArgumentParser(description="BrQin Full Curve Benchmark")
     parser.add_argument("--trials", type=int, default=100000)
-    parser.add_argument("--p_min", type=float, default=0.001)
-    parser.add_argument("--p_max", type=float, default=0.025)
-    parser.add_argument("--p_points", type=int, default=12)
     args = parser.parse_args()
 
-    benchmark = BrQinMCBenchmark()
-    p_values = np.linspace(args.p_min, args.p_max, args.p_points)
-    results = benchmark.run_benchmark(p_phys_values=p_values, trials=args.trials)
+    benchmark = BrQinFullCurveBenchmark()
+    results = benchmark.run_full_curves(trials=args.trials)

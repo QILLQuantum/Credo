@@ -5,9 +5,9 @@ from tqdm import tqdm
 import time
 import csv
 
-print("=== BrQin Monte Carlo Logical Error Benchmark (100,000 trials, d=3,5,7,9) ===")
+print("=== BrQin High-Precision Threshold Curve (200,000 trials) ===")
 
-class BrQinMCBenchmark:
+class BrQinThresholdBenchmark:
     def __init__(self):
         self.code_distance = 5
 
@@ -26,7 +26,7 @@ class BrQinMCBenchmark:
         total_syndrome = x_syndrome + z_syndrome
         return total_syndrome <= 1
 
-    def monte_carlo_logical_error(self, p_phys, trials=100000):
+    def monte_carlo_logical_error(self, p_phys, trials=200000):
         error_count = 0
         for _ in range(trials):
             errors = self.simulate_physical_errors(p_phys)
@@ -36,9 +36,13 @@ class BrQinMCBenchmark:
                 error_count += 1
         return error_count / trials
 
-    def run_benchmark(self, p_phys_values=None, trials=100000):
-        if p_phys_values is None:
-            p_phys_values = np.linspace(0.001, 0.025, 12)
+    def run_precision_benchmark(self, trials=200000):
+        # Dense sampling around threshold (0.005 to 0.015)
+        p_phys_values = np.concatenate([
+            np.linspace(0.001, 0.005, 6),
+            np.linspace(0.006, 0.014, 17),
+            np.linspace(0.015, 0.025, 6)
+        ])
 
         distances = [3, 5, 7, 9]
         results = {}
@@ -57,7 +61,7 @@ class BrQinMCBenchmark:
         print(f"\nTotal time: {total_time:.1f} seconds ({total_time/60:.1f} minutes)")
 
         # Save CSV
-        with open('brqin_mc_d3_d5_d7_d9_100k.csv', 'w', newline='') as f:
+        with open('brqin_threshold_precision.csv', 'w', newline='') as f:
             writer = csv.writer(f)
             header = ['p_phys'] + [f'd={d}' for d in distances]
             writer.writerow(header)
@@ -66,33 +70,29 @@ class BrQinMCBenchmark:
                 writer.writerow(row)
 
         # Plot
-        plt.figure(figsize=(10, 7))
+        plt.figure(figsize=(11, 7))
         colors = ['blue', 'green', 'red', 'purple']
         for i, d in enumerate(distances):
             plt.plot(p_phys_values, results[d], marker='o', color=colors[i], linewidth=2.5, label=f'd = {d}')
 
         plt.axvline(x=0.0105, color='black', linestyle='--', label='Threshold ≈ 1.05%')
-        plt.title(f'Logical Error Rate vs Physical Error Rate\n(100,000 Trials per Point)')
+        plt.title(f'High-Precision Logical Error Rate vs Physical Error Rate\n(200,000 Trials per Point)')
         plt.xlabel('Physical Error Rate (p_phys)')
         plt.ylabel('Logical Error Rate')
         plt.grid(True)
         plt.legend()
-        plt.savefig('logical_error_vs_pphys_d3_d5_d7_d9_100k.png', dpi=400, bbox_inches='tight')
+        plt.savefig('threshold_curve_precision.png', dpi=400, bbox_inches='tight')
         plt.close()
 
-        print("📊 Results saved to 'brqin_mc_d3_d5_d7_d9_100k.csv'")
-        print("📊 High-res plot saved as 'logical_error_vs_pphys_d3_d5_d7_d9_100k.png'")
+        print("📊 Precision results saved to 'brqin_threshold_precision.csv'")
+        print("📊 High-res precision plot saved as 'threshold_curve_precision.png'")
 
         return results
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="BrQin Monte Carlo Benchmark")
-    parser.add_argument("--trials", type=int, default=100000)
-    parser.add_argument("--p_min", type=float, default=0.001)
-    parser.add_argument("--p_max", type=float, default=0.025)
-    parser.add_argument("--p_points", type=int, default=12)
+    parser = argparse.ArgumentParser(description="BrQin Threshold Precision Benchmark")
+    parser.add_argument("--trials", type=int, default=200000)
     args = parser.parse_args()
 
-    benchmark = BrQinMCBenchmark()
-    p_values = np.linspace(args.p_min, args.p_max, args.p_points)
-    results = benchmark.run_benchmark(p_phys_values=p_values, trials=args.trials)
+    benchmark = BrQinThresholdBenchmark()
+    results = benchmark.run_precision_benchmark(trials=args.trials)

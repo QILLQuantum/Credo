@@ -36,7 +36,7 @@ for step in range(12):
         db.save_simulation_step(peps, nodes, observables, energy, mode, entropy_delta, syndromes)
         print(f"   [DB] Step {step} persisted | Logical err est: {syndromes['p_phys']:.3f}")
 
-# === Plot ===
+# === Plot (saved as PNG, no popup) ===
 plt.figure(figsize=(12, 5))
 
 plt.subplot(1, 2, 1)
@@ -57,7 +57,7 @@ plt.legend()
 
 plt.tight_layout()
 plt.savefig('brqin_energy_mag_plot.png', dpi=300)
-plt.show()
+plt.close()  # Close figure to avoid popup
 
 print("\n=== Final Summary ===")
 print(f"Final magnetization: {mags[-1]:.6f}")

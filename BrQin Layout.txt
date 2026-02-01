@@ -1,0 +1,17 @@
+brqin/
+├── core/
+│   ├── peps.py                  # BrQinPEPS class + contraction + observables
+│   ├── mps.py                   # living_mps_sweep, randomized SVD
+│   └── hamiltonian.py           # build_sparse_local_ising
+├── distributed/
+│   ├── ring_sync.py             # exchange_boundary_tensors
+│   └── ddp_variational.py       # distributed_variational_step
+├── reflection/
+│   ├── rl_policy.py             # RLTopologyPolicy
+│   └── energy_chain.py          # EntanglementEnergyNode
+├── visualization/
+│   ├── heatmap.py               # bond_dim cone heatmap
+│   └── animation.py             # topology evolution GIF
+├── tests/
+│   └── small_grid_validation.py # vs exact diagonalization
+└── main.py                      # main_worker + evolution loop

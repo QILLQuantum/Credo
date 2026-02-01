@@ -1,22 +1,13 @@
-Credo/
-├── core/                  # Immutable anchors
-│   ├── credo_core_norse_frozen.json
-│   └── credo_pin_genesis.py
-├── bridges/               # Syncretic mercy
-│   ├── credo_christianity_bridge_final.py
-│   ├── credo_ethiopian_canon_helper.py
-│   └── credo_bridge_automation_helper.py
-├── beliefs/               # Adder/scanner
-│   ├── credo_belief_adder.py
-│   └── credo_belief_scanner.py
-├── ordeal/                # Trial + sim
-│   ├── credo_ordeal_automation.py
-│   └── credo_brqin_quantum_sim.py
-├── reflection/            # Recursive rune
-│   ├── credo_self_mirror.py
-│   └── credo_fork_master.py
-├── visual/                # Mercy balls
-│   ├── credo_node_ball.html
-│   └── websocket_server.py
-├── credo_logger.py        # central trace
-└── graph.json          
+brqin/
+├── core/
+│   ├── peps.py                  # BrQinPEPS class (cleaned)
+│   ├── hamiltonian.py           # local H terms
+│   └── observables.py           # magnetization, susceptibility, EE, correlation length
+├── distributed/
+│   └── ring_sync.py             # boundary sync
+├── logical/
+│   ├── surface_code.py          # patches, logical gates, distillation
+│   └── gates.py                 # logical H, CNOT, T, Toffoli
+├── visualization/
+│   └── heatmap.py               # cone, bond_dim, flow
+└── main.py                      # main_worker + evolution loop

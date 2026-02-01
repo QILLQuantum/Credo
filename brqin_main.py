@@ -27,8 +27,10 @@ for step in range(12):
     observables = peps.compute_observables()
     mag = observables['magnetization']
 
-    # Adaptive bond growth
-    peps.adaptive_bond_growth(nodes[step % 4])
+    # Force some growth for demonstration
+    if step % 3 == 0:
+        nodes[step % 4].energy = 0.5  # give budget
+        peps.adaptive_bond_growth(nodes[step % 4])
 
     # Track average bond dimension
     total_bond = sum(peps.bond_map_h.values()) + sum(peps.bond_map_v.values())

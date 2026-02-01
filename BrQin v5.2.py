@@ -7,12 +7,20 @@ import os
 import networkx as nx
 import matplotlib.pyplot as plt
 
-print("=== BrQin v5.2 - 12×12 Full Update Hybrid + CTMRG + RSVD + Adaptive Logical ===\n")
+print("=== BrQin v5.2 - Polished: Full Update Hybrid + CTMRG + RSVD + Adaptive Logical ===\n")
 
 def print_mem(label=""):
     mb = psutil.Process(os.getpid()).memory_info().rss / (1024**2)
     print(f"[{label}] Memory: {mb:.2f} MB")
     return mb
+
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+
+def cleanup():
+    dist.destroy_process_group()
 
 class EntanglementEnergyNode:
     def __init__(self, name):
@@ -91,12 +99,18 @@ class BrQinPEPS:
                 t.data /= torch.norm(t.data) + 1e-12
         return loss.item()
 
-    def hybrid_evolution_step(self, H_terms, entropy_delta, budget_node):
-        if entropy_delta > 0.08 and budget_node.can_mutate(cost=0.6):
-            budget_node.spend(0.6)
-            return self.full_update(H_terms)
-        else:
-            return self.simple_update(H_terms)
+    def rsvd(self, mat, k=16):
+        try:
+            Omega = torch.randn(mat.shape[1], k, dtype=mat.dtype, device=mat.device)
+            Y = mat @ Omega
+            Q, _ = torch.linalg.qr(Y, mode='reduced')
+            B = Q.T @ mat
+            U_tilde, S, Vh = torch.linalg.svd(B, full_matrices=False)
+            U = Q @ U_tilde
+            return U, S, Vh
+        except:
+            U, S, Vh = torch.linalg.svd(mat.to(torch.float32), full_matrices=False)
+            return U, S, Vh
 
     def boundary_mps_contraction(self, H_terms=None):
         energy = 0.0
@@ -108,7 +122,25 @@ class BrQinPEPS:
                 if H_terms is not None:
                     row_energy += self.local_expectation(tensor, H_terms[r][c])
                 bond_h = self.bond_map_h.get(((r,c),(r,c+1)), 8) if c + 1 < self.Ly else 1
-                # RSVD + adaptive k wired here
+
+                mat = tensor.mean(dim=[0,2,3]).reshape(-1, tensor.shape[1])
+                local_entropy = torch.abs(mat).mean().item()
+                k = 16 if local_entropy <= 0.7 else 32
+                k = min(k, bond_h * 2)
+
+                U, S, Vh = self.rsvd(mat, k)
+
+                # Higher truncation precision
+                cum_s2 = torch.cumsum(S**2, dim=0) / torch.sum(S**2 + 1e-12)
+                keep = int(torch.sum(cum_s2 < 1 - 1e-9)) + 1
+                keep = min(keep, bond_h)
+
+                U = U[:, :keep]
+                S = S[:keep]
+                Vh = Vh[:keep, :]
+
+                env = env @ (U @ torch.diag(S) @ Vh) if env is not None else (U @ torch.diag(S) @ Vh)
+
             energy += row_energy
             self.update_corners_ctmrg(r)
         return energy

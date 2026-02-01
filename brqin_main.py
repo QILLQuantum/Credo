@@ -6,15 +6,26 @@ import matplotlib.pyplot as plt
 from brqin_peps import BrQinPEPS, EntanglementEnergyNode
 from credo_db_facade import CredoDBFacade
 
-print("=== BrQin v5.2 - Single Process Mode ===")
+print("=== BrQin v5.2 - Single Process Mode with Ising Hamiltonian ===")
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
 Lx, Ly = 12, 12
 peps = BrQinPEPS(Lx, Ly, init_bond=12, device=device)
-H_terms = [[torch.tensor([0.0, -1.0], device=device) for _ in range(Ly)] for _ in range(Lx)]
 nodes = [EntanglementEnergyNode(f"Node{i}") for i in range(4)]
 db = CredoDBFacade()
+
+# Simple Ising Hamiltonian: -J * sum_<i,j> Z_i Z_j - h * sum Z_i (J=1, h=0.5)
+J = 1.0
+h = 0.5
+H_terms = []
+for r in range(Lx):
+    row = []
+    for c in range(Ly):
+        # local field + nearest neighbor coupling (simplified)
+        local_h = torch.tensor([h, 0.0], device=device)  # Z term
+        row.append(local_h)
+    H_terms.append(row)
 
 energies = []
 mags = []
@@ -36,12 +47,11 @@ for step in range(12):
         db.save_simulation_step(peps, nodes, observables, energy, mode, entropy_delta, syndromes)
         print(f"   [DB] Step {step} persisted | Logical err est: {syndromes['p_phys']:.3f}")
 
-# === Plot (saved as PNG, no popup) ===
+# Plot saved automatically
 plt.figure(figsize=(12, 5))
-
 plt.subplot(1, 2, 1)
 plt.plot(energies, marker='o', linewidth=2, label='Energy')
-plt.title('Energy over Steps')
+plt.title('Energy over Steps (Ising)')
 plt.xlabel('Step')
 plt.ylabel('Energy')
 plt.grid(True)
@@ -57,7 +67,7 @@ plt.legend()
 
 plt.tight_layout()
 plt.savefig('brqin_energy_mag_plot.png', dpi=300)
-plt.close()  # Close figure to avoid popup
+plt.close()
 
 print("\n=== Final Summary ===")
 print(f"Final magnetization: {mags[-1]:.6f}")

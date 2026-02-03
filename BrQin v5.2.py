@@ -1,220 +1,69 @@
-import numpy as np
-import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
-import psutil
-import os
-import networkx as nx
-import matplotlib.pyplot as plt
-from persistence import MimisbrunnVault
+# BrQin v5.3.py - Persistence Hook + Tensor Oracle Integration
+# Date: February 2026
 
-print("=== BrQin v5.2 Full - Hybrid + CTMRG + RSVD + Adaptive Logical + Persistence ===\n")
+import datetime
+from credo_persistence import CredoPersistence
+from oracle_peps import PepsOracle   # NEW: our simulator as oracle
+from credo_logger import log_reflection, log_oracle_call
 
-def print_mem(label=""):
-    mb = psutil.Process(os.getpid()).memory_info().rss / (1024**2)
-    print(f"[{label}] Memory: {mb:.2f} MB")
-    return mb
+class BrQin:
+    def __init__(self):
+        self.version = "5.3"
+        self.persistence = CredoPersistence()          # NEW: persistence facade
+        self.oracle = PepsOracle(steps=12, Lz=6, bond=8, use_gpu=False)  # NEW: tensor oracle
+        self.reflection_count = 0
+        print(f"✅ BrQin v{self.version} initialized with persistence + oracle")
 
-def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+    def reflect(self, ordeal_context: str, initial_belief: str) -> dict:
+        self.reflection_count += 1
+        reflection_id = f"ref_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.reflection_count}"
 
-def cleanup():
-    dist.destroy_process_group()
+        # 1. Run Tensor Oracle (NEW)
+        print("🔮 Calling Tensor Oracle...")
+        oracle_metrics = self.oracle.run(mode="light")   # light = fast, full = with animation
+        log_oracle_call(reflection_id, oracle_metrics)
 
-class EntanglementEnergyNode:
-    def __init__(self, name):
-        self.name = name
-        self.energy = 0.0
-    def harvest(self, local_entropy):
-        harvested = max(0.0, local_entropy - 0.3)
-        self.energy += harvested
-        return harvested
-    def can_mutate(self, cost=0.15):
-        return self.energy >= cost
-    def spend(self, cost=0.15):
-        if self.can_mutate(cost):
-            self.energy -= cost
-            return True
-        return False
+        # 2. Enrich belief with oracle feedback
+        enriched_belief = f"{initial_belief}\n\n[Oracle v5.3]\n" \
+                          f"Certified Energy: {oracle_metrics['certified_energy']:.4f} ± {oracle_metrics['uncertainty']:.4f}\n" \
+                          f"Logical Advantage: {oracle_metrics['logical_advantage']:.3f} (d={oracle_metrics['code_distance']})\n" \
+                          f"Final Avg Bond: {oracle_metrics['final_avg_bond']:.1f} | Growth Rate: {oracle_metrics['growth_rate']}"
 
-class BrQinPEPS:
-    def __init__(self, Lx, Ly, init_bond=12, device=torch.device('cpu')):
-        self.Lx = Lx
-        self.Ly = Ly
-        self.device = device
-        self.tensors = {}
-        self.bond_map_h = {}
-        self.bond_map_v = {}
-        self.corner_tl = torch.eye(init_bond, dtype=torch.complex64, device=device)
-        self.corner_tr = torch.eye(init_bond, dtype=torch.complex64, device=device)
-        self.corner_bl = torch.eye(init_bond, dtype=torch.complex64, device=device)
-        self.corner_br = torch.eye(init_bond, dtype=torch.complex64, device=device)
+        # 3. Create reflection record
+        record = {
+            "reflection_id": reflection_id,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "ordeal_context": ordeal_context,
+            "initial_belief": initial_belief,
+            "enriched_belief": enriched_belief,
+            "oracle_metrics": oracle_metrics,
+            "version": self.version
+        }
 
-        for r in range(Lx):
-            for c in range(Ly):
-                tensor = torch.randn(init_bond, init_bond, init_bond, init_bond, 2, dtype=torch.complex64, device=device)
-                self.tensors[(r,c)] = tensor / torch.norm(tensor)
+        # 4. Save via persistence facade (NEW)
+        saved_record = self.persistence.save(record)
+        log_reflection(reflection_id, saved_record)
 
-        for r in range(Lx):
-            for c in range(Ly):
-                if c + 1 < Ly:
-                    self.bond_map_h[((r,c),(r,c+1))] = init_bond
-                if r + 1 < Lx:
-                    self.bond_map_v[((r,c),(r+1,c))] = init_bond
+        print(f"💾 Reflection {reflection_id} persisted (Merkle vault + SQLite)")
+        return saved_record
 
-    def adaptive_contraction_order(self, entropy_grid):
-        bond_entropy = {}
-        for r in range(self.Lx):
-            for c in range(self.Ly):
-                if c + 1 < self.Ly:
-                    bond_entropy[((r,c),(r,c+1))] = (entropy_grid[r,c] + entropy_grid[r,c+1]) / 2
-                if r + 1 < self.Lx:
-                    bond_entropy[((r,c),(r+1,c))] = (entropy_grid[r,c] + entropy_grid[r+1,c]) / 2
-        return sorted(bond_entropy, key=bond_entropy.get, reverse=True)
-
-    def local_expectation(self, tensor, local_h):
-        phys = tensor.mean(dim=[0,1,2,3])
-        return (phys[0] * local_h).real.item()
-
-    def simple_update(self, H_terms):
-        energy = 0.0
-        for r in range(self.Lx):
-            for c in range(self.Ly):
-                tensor = self.tensors[(r, c)]
-                energy += self.local_expectation(tensor, H_terms[r][c])
-        return energy
-
-    def full_update(self, H_terms, lr=0.01, steps=5):
-        optimizer = torch.optim.Adam(list(self.tensors.values()), lr=lr)
-        for _ in range(steps):
-            optimizer.zero_grad()
-            loss = 0.0
-            for r in range(self.Lx):
-                for c in range(self.Ly):
-                    tensor = self.tensors[(r, c)]
-                    loss += self.local_expectation(tensor, H_terms[r][c])
-            loss.backward()
-            optimizer.step()
-            for t in self.tensors.values():
-                t.data /= torch.norm(t.data) + 1e-12
-        return loss.item()
-
-    def rsvd(self, mat, k=16):
-        try:
-            Omega = torch.randn(mat.shape[1], k, dtype=mat.dtype, device=mat.device)
-            Y = mat @ Omega
-            Q, _ = torch.linalg.qr(Y, mode='reduced')
-            B = Q.T @ mat
-            U_tilde, S, Vh = torch.linalg.svd(B, full_matrices=False)
-            U = Q @ U_tilde
-            return U, S, Vh
-        except:
-            U, S, Vh = torch.linalg.svd(mat.to(torch.float32), full_matrices=False)
-            return U, S, Vh
-
-    def boundary_mps_contraction(self, H_terms=None):
-        energy = 0.0
-        env = None
-        entropy_grid = np.random.rand(self.Lx, self.Ly) * 0.9 + 0.2
-        contraction_order = self.adaptive_contraction_order(entropy_grid)
-        for r in range(self.Lx - 1, -1, -1):
-            row_energy = 0.0
-            for c in range(self.Ly):
-                tensor = self.tensors[(r, c)]
-                if H_terms is not None:
-                    row_energy += self.local_expectation(tensor, H_terms[r][c])
-                bond_h = self.bond_map_h.get(((r,c),(r,c+1)), 8) if c + 1 < self.Ly else 1
-
-                mat = tensor.mean(dim=[0,2,3]).reshape(-1, tensor.shape[1])
-                local_entropy = torch.abs(mat).mean().item()
-                k = 16 if local_entropy <= 0.7 else 32
-                k = min(k, bond_h * 2)
-
-                U, S, Vh = self.rsvd(mat, k)
-                cum_s2 = torch.cumsum(S**2, dim=0) / torch.sum(S**2 + 1e-12)
-                keep = int(torch.sum(cum_s2 < 1 - 1e-9)) + 1
-                keep = min(keep, bond_h)
-
-                U = U[:, :keep]
-                S = S[:keep]
-                Vh = Vh[:keep, :]
-
-                env = env @ (U @ torch.diag(S) @ Vh) if env is not None else (U @ torch.diag(S) @ Vh)
-
-            energy += row_energy
-            self.update_corners_ctmrg(r)
-        return energy
-
-    def update_corners_ctmrg(self, row):
-        bond = max(self.bond_map_h.values(), default=8)
-        self.corner_tl = torch.randn(bond, bond, dtype=torch.complex64, device=self.device) / torch.norm(self.corner_tl)
-        return
-
-    def compute_observables(self):
-        mag = 0.0
-        for tensor in self.tensors.values():
-            phys = tensor.mean(dim=[0,1,2,3])
-            mag += phys[0].real.item()
-        mag /= len(self.tensors)
-        return {'magnetization': mag}
-
-    def hybrid_evolution_step(self, H_terms, entropy_delta, energy_node):
-        if H_terms is None:
-            H_terms = [[torch.tensor([0.0, -1.0], device=self.device) for _ in range(self.Ly)] for _ in range(self.Lx)]
-        threshold = 0.08
-        use_full = (entropy_delta > threshold) and energy_node.can_mutate(cost=0.15)
-        if use_full:
-            energy = self.full_update(H_terms, lr=0.01, steps=5)
-            energy_node.spend(cost=0.15)
-            mode = "Full Update"
-        else:
-            energy = self.simple_update(H_terms)
-            mode = "Simple Update"
-        return energy, mode
-
-def main_worker(rank, world_size):
-    setup(rank, world_size)
-    device = torch.device(f'cuda:{rank}' if torch.cuda.is_available() else 'cpu')
-
-    Lx, Ly = 12, 12
-    peps = BrQinPEPS(Lx, Ly, init_bond=12, device=device)
-
-    H_terms = [[torch.tensor([0.0, -1.0], device=device) for _ in range(Ly)] for _ in range(Lx)]
-    entropy_grid = np.random.rand(Lx, Ly) * 0.9 + 0.2
-    nodes = [EntanglementEnergyNode(f"GPU{rank}-Node{i}") for i in range(4)]
-    vault = MimisbrunnVault()
-
-    for step in range(12):
-        entropy_delta = torch.rand(1, device=device).item() * 0.9 + 0.2 - 0.3
-        energy, mode = peps.hybrid_evolution_step(H_terms, entropy_delta, nodes[step % 4])
-        boundary_energy = peps.boundary_mps_contraction(H_terms)
-        observables = peps.compute_observables()
-
-        if rank == 0:
-            print(f"Step {step} | Hybrid Energy: {energy:.4f} | Boundary Energy: {boundary_energy:.4f} | Mode: {mode}")
-
-        if step % 3 == 0 and rank == 0:
-            metadata = {
-                "energy": float(energy),
-                "mode": mode,
-                "observables": observables,
-                "entropy_delta": entropy_delta,
-                "logical_error_estimate": 0.005
-            }
-            vault.save_state(peps, nodes, metadata, step)
-            vault.append_event("syndrome_measurement", {"syndrome_weight": np.random.randint(0, 20), "p_phys": 0.005}, {"step": step})
-            print(f"[Vault] Checkpoint & syndrome event saved at step {step}")
-
-    if rank == 0:
-        torch.save(peps.tensors, 'brqin_12x12_final.pt')
-        nx.write_graphml(nx.grid_2d_graph(Lx, Ly), 'brqin_12x12_topology.graphml')
-        print("12×12 final state and topology saved.")
-        print(vault.verify_chain())
-
-    cleanup()
+    def run_reflection_loop(self, ordeals: list):
+        for i, ordeal in enumerate(ordeals):
+            print(f"\n=== Ordeal {i+1}/{len(ordeals)} ===")
+            belief = input(f"Initial belief for '{ordeal}': ") if hasattr(__builtins__, 'input') else f"Belief for {ordeal}"
+            result = self.reflect(ordeal, belief)
+            print(f"✅ Completed: {result['reflection_id']}")
 
 if __name__ == "__main__":
-    world_size = torch.cuda.device_count() or 1
-    mp.spawn(main_worker, args=(world_size,), nprocs=world_size, join=True)
+    brqin = BrQin()
+    
+    # Example usage
+    test_ordeals = [
+        "What is the nature of self-reflection under uncertainty?",
+        "How should Credo respond to conflicting beliefs?",
+        "Integrate tensor oracle feedback into long-term memory"
+    ]
+    
+    brqin.run_reflection_loop(test_ordeals)
+    
+    print(f"\n🎉 BrQin v5.3 complete. Total reflections: {brqin.reflection_count}")

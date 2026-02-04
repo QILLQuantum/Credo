@@ -1,62 +1,52 @@
-from credo_merkle_vault import CredoMerkleVault
-from credo_sqlite_store import CredoSQLiteStore
-from typing import Dict, Any, List, Optional, Tuple
+# persistence/credo_db_facade.py  # or rename to credo_persistence.py
+
 import os
+from typing import Dict, List, Optional
 
-class CredoDBFacade:
-    def __init__(self, encryption_key: Optional[bytes] = None, db_path: str = "brqin_history.db"):
-        self.merkle = CredoMerkleVault(encryption_key)
+from credo_sqlite_store import CredoSQLiteStore
+from credo_merkle_vault import CredoMimirVault
+
+class CredoPersistence:  # was CredoDBFacade
+    def __init__(
+        self,
+        db_path: str = "./credo_data/credo.db",
+        vault_log: str = "./credo_data/mimir_vault.log",
+    ):
         self.sqlite = CredoSQLiteStore(db_path)
-        self.current_step = 0
-        self.vault_dir = "brqin_vault"
-        os.makedirs(self.vault_dir, exist_ok=True)
+        key = os.getenv("CREDO_MIMIR_KEY")
+        if key:
+            key = key.encode()
+        self.vault = CredoMimirVault(vault_log, key=key)
 
-    def save_simulation_step(self, peps, energy_nodes: List, observables: Dict[str, Any], 
-                             energy: float, mode: str, entropy_delta: float, 
-                             syndromes: Optional[Dict] = None) -> bool:
-        metadata = {
-            "energy": float(energy),
-            "mode": mode,
-            "observables": observables,
-            "entropy_delta": float(entropy_delta),
-            "logical_error_estimate": syndromes.get("p_phys", 0.005) if syndromes else 0.005,
-            "step": self.current_step
-        }
+    def save(self, payload: Dict, entry_type: str = "belief") -> str:
+        """Save to both layers – returns hash"""
+        hash_sql = self.sqlite.persist(payload, entry_type)
+        hash_vault = self.vault.append(payload, entry_type)
+        if hash_sql != hash_vault:
+            print("WARN: hash mismatch")
+        return hash_sql
 
-        self.merkle.save_state(peps, energy_nodes, metadata, self.current_step)
-        self.merkle.append_event("simulation_step", {
-            "step": self.current_step,
-            "energy": energy,
-            "mode": mode,
-            "entropy_delta": entropy_delta
-        }, metadata)
+    def get_by_hash(self, entry_hash: str) -> Optional[Dict]:
+        return self.sqlite.get_entry_by_hash(entry_hash)
 
-        if syndromes:
-            self.merkle.append_event("syndrome_measurement", syndromes, {"step": self.current_step})
+    def recent(self, limit: int = 10) -> List[Dict]:
+        return self.sqlite.list_recent_entries(limit=limit)
 
-        self.sqlite.save_step(self.current_step, energy, mode, observables, entropy_delta, syndromes or {})
+    def count(self) -> int:
+        return self.vault.count()
 
-        self.current_step += 1
-        return True
+    def last_root(self) -> Optional[str]:
+        return self.vault.get_last_root()
 
-    def load_latest_checkpoint(self):
-        return self.merkle.load_state(-1)
+    def close(self):
+        self.sqlite.close()
 
-    def load_checkpoint(self, step: int):
-        return self.merkle.load_state(step)
-
-    def verify_integrity(self) -> Tuple[bool, str]:
-        return self.merkle.verify_chain()
-
-    def get_history(self, event_type: Optional[str] = None):
-        return self.merkle.get_event_history(event_type)
-
-    def query_observables(self, limit: int = 50):
-        return self.sqlite.get_history(limit=limit)
-
-    def get_checkpoint_count(self) -> int:
-        return len([f for f in os.listdir(self.vault_dir) if f.startswith("checkpoint_step_")])
 
 if __name__ == "__main__":
-    db = CredoDBFacade()
-    print("✅ CredoDBFacade (hybrid Merkle Vault + SQLite) initialized")
+    p = CredoPersistence()
+    p.save({"thought": "Facade refined"}, "reflection")
+    p.save({"fact": 42}, "fact")
+    print(f"Root: {p.last_root()[:12] if p.last_root() else 'None'}…")
+    print(f"Count: {p.count()}")
+    print("Recent:", p.recent(3))
+    p.close()

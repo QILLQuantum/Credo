@@ -1,75 +1,41 @@
 import sqlite3
+import os
+import hashlib
 import json
-from datetime import datetime
-from typing import Dict, Any, List, Optional
 
 class CredoSQLiteStore:
-    def __init__(self, db_path: str = "brqin_history.db"):
-        self.db_path = db_path
-        self.init_db()
+    def __init__(self, db_path="credo_data/credo.db"):
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self.conn = sqlite3.connect(db_path)
+        self.c = self.conn.cursor()
+        self.c.execute('''CREATE TABLE IF NOT EXISTS entries
+                          (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                           hash TEXT UNIQUE,
+                           type TEXT,
+                           payload TEXT,
+                           timestamp TEXT)''')
+        self.conn.commit()
 
-    def init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS simulation_steps (
-                    step INTEGER PRIMARY KEY,
-                    timestamp TEXT,
-                    energy REAL,
-                    mode TEXT,
-                    observables TEXT,
-                    entropy_delta REAL,
-                    syndromes TEXT
-                )
-            ''')
+    def persist(self, payload: dict, entry_type: str) -> str:
+        payload_str = json.dumps(payload)
+        entry_hash = hashlib.sha256(payload_str.encode()).hexdigest()
+        timestamp = datetime.datetime.now().isoformat()
+        try:
+            self.c.execute("INSERT INTO entries (hash, type, payload, timestamp) VALUES (?, ?, ?, ?)",
+                           (entry_hash, entry_type, payload_str, timestamp))
+            self.conn.commit()
+        except sqlite3.IntegrityError:
+            pass  # Duplicate hash
+        return entry_hash
 
-    def save_step(self, step: int, energy: float, mode: str, observables: Dict, entropy_delta: float, syndromes: Dict):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT OR REPLACE INTO simulation_steps 
-                (step, timestamp, energy, mode, observables, entropy_delta, syndromes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                step,
-                datetime.now().isoformat(),
-                float(energy),
-                mode,
-                json.dumps(observables),
-                float(entropy_delta),
-                json.dumps(syndromes)
-            ))
+    def get_entry_by_hash(self, entry_hash: str):
+        self.c.execute("SELECT payload FROM entries WHERE hash = ?", (entry_hash,))
+        row = self.c.fetchone()
+        return json.loads(row[0]) if row else None
 
-    def get_history(self, limit: int = 100):
-        with sqlite3.connect(self.db_path) as conn:
-            rows = conn.execute(
-                'SELECT * FROM simulation_steps ORDER BY step DESC LIMIT ?', (limit,)
-            ).fetchall()
-            return [{
-                "step": r[0],
-                "timestamp": r[1],
-                "energy": r[2],
-                "mode": r[3],
-                "observables": json.loads(r[4]),
-                "entropy_delta": r[5],
-                "syndromes": json.loads(r[6]) if r[6] else {}
-            } for r in rows]
+    def list_recent_entries(self, limit=10):
+        self.c.execute("SELECT payload FROM entries ORDER BY id DESC LIMIT ?", (limit,))
+        return [json.loads(row[0]) for row in self.c.fetchall()]
 
-    def load_latest(self):
-        with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute(
-                'SELECT * FROM simulation_steps ORDER BY step DESC LIMIT 1'
-            ).fetchone()
-            if row:
-                return {
-                    "step": row[0],
-                    "timestamp": row[1],
-                    "energy": row[2],
-                    "mode": row[3],
-                    "observables": json.loads(row[4]),
-                    "entropy_delta": row[5],
-                    "syndromes": json.loads(row[6]) if row[6] else {}
-                }
-        return {}
-
-if __name__ == "__main__":
-    store = CredoSQLiteStore()
-    print("✅ CredoSQLiteStore initialized successfully")
+    def close(self):
+        self.conn.close()

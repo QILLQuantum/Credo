@@ -1,158 +1,178 @@
-# BrQin v5.3.py - Persistence Hook + Tensor Oracle Integration
+# BrQin v5.3.py - Persistence Hook + Tensor Oracle + Self-Evolving Oracle
 # Date: February 2026
 
 import datetime
-import json
-import os
-import hashlib
-import sqlite3
+import traceback
+import numpy as np
+from credo_db_facade import CredoDBFacade
 from oracle_peps import PepsOracle
-
-class MerkleTree:
-    def __init__(self):
-        self.leaves = []
-        self.root = None
-
-    def add_leaf(self, data_hash: str):
-        self.leaves.append(data_hash)
-        self._build_root()
-
-    def _build_root(self):
-        if not self.leaves:
-            self.root = None
-            return
-        nodes = self.leaves[:]
-        while len(nodes) > 1:
-            new_level = []
-            for i in range(0, len(nodes), 2):
-                left = nodes[i]
-                right = nodes[i + 1] if i + 1 < len(nodes) else left
-                combined = hashlib.sha256((left + right).encode()).hexdigest()
-                new_level.append(combined)
-            nodes = new_level
-        self.root = nodes[0]
-
-    def verify(self, leaf_hash: str, proof: list = None) -> bool:
-        """Simple verification against current root"""
-        return True  # Placeholder; full proof in future
+from credo_logger import log_reflection, log_oracle_call
 
 class BrQin:
-    def __init__(self, db_path="brqin_reflections.db", persistence_dir="brqin_persistence"):
+    def __init__(self):
         self.version = "5.3"
-        self.reflection_count = 0
-        self.db_path = db_path
-        self.persistence_dir = persistence_dir
-        os.makedirs(persistence_dir, exist_ok=True)
+        try:
+            self.persistence = CredoDBFacade()
+            self.oracle = PepsOracle(steps=12, Lz=6, bond=8)
+            self.reflection_count = 0
+            self.error_count = 0
+            self.last_quality_score = 0.0
+            self.quality_history = []  # for trend detection
+            print(f"✅ BrQin v{self.version} initialized with self-evolving oracle")
+        except Exception as e:
+            print(f"CRITICAL: Init failed - {str(e)}")
+            traceback.print_exc()
+            raise
 
-        # SQLite setup
-        self.conn = sqlite3.connect(db_path)
-        self.cursor = self.conn.cursor()
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS reflections (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                reflection_id TEXT UNIQUE,
-                timestamp TEXT,
-                ordeal_context TEXT,
-                initial_belief TEXT,
-                enriched_belief TEXT,
-                oracle_metrics TEXT,
-                tensor_snapshot TEXT,
-                merkle_leaf_hash TEXT,
-                merkle_root TEXT
-            )
-        ''')
-        self.conn.commit()
-
-        # Merkle tree
-        self.merkle_tree = MerkleTree()
-
-        # Oracle
-        self.oracle = PepsOracle(steps=12, Lz=6, init_bond=8, ctmrg_chi=32, physical_d=2, use_gpu=False)
-        print(f"BrQin v{self.version} initialized with PEPS oracle & full Merkle persistence")
-
-    def reflect(self, ordeal_context: str, initial_belief: str):
+    def reflect(self, ordeal_context: str, initial_belief: str) -> dict:
         self.reflection_count += 1
-        reflection_id = f"ref_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.reflection_count:03d}"
+        reflection_id = f"ref_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.reflection_count}"
 
-        print(f"Reflection {reflection_id} started")
+        try:
+            print("🔮 Calling Tensor Oracle...")
+            oracle_metrics = self.oracle.run(mode="light")
 
-        # Call oracle
-        oracle_metrics = self.oracle.run(mode="light", guided_trickle=True)
+            log_oracle_call(reflection_id, oracle_metrics)
 
-        # Enriched belief
-        enriched_belief = f"""
-{initial_belief}
+            # Enriched belief (example – add your full metrics here)
+            enriched_belief = f"{initial_belief}\n\n[Oracle v5.3]\n" \
+                              f"Certified Energy: {oracle_metrics['certified_energy']:.4f} ± {oracle_metrics['uncertainty']:.4f}\n" \
+                              f"Logical Advantage: {oracle_metrics['logical_advantage']:.3f} (d={oracle_metrics['code_distance']})\n" \
+                              f"Final Avg Bond: {oracle_metrics['final_avg_bond']:.1f} | Growth Rate: {oracle_metrics['growth_rate']}"
 
-[PEPS-Thinking Core - Fracton Order]
-Certified Energy: {oracle_metrics['certified_energy']:.4f}
-Final Avg Bond: {oracle_metrics['final_avg_bond']:.1f}
-Code Distance: {oracle_metrics['code_distance']}
-Logical Advantage: {oracle_metrics.get('logical_advantage', 'N/A')}
-Mode: {oracle_metrics['mode']}
-Fracton Rigidity: High (Haah/X-cube enforced)
-Timestamp: {oracle_metrics['timestamp']}
-"""
+            record = {
+                "reflection_id": reflection_id,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "ordeal_context": ordeal_context,
+                "initial_belief": initial_belief,
+                "enriched_belief": enriched_belief,
+                "oracle_metrics": oracle_metrics,
+                "version": self.version,
+                "status": "success"
+            }
 
-        # Tensor snapshot
-        tensor_snapshot = {
-            "avg_bond": oracle_metrics['final_avg_bond'],
-            "energy": oracle_metrics['certified_energy'],
-            "code_distance": oracle_metrics['code_distance']
-        }
+            saved_record = self.persistence.save_belief(record, "reflection")
+            log_reflection(reflection_id, saved_record)
 
-        # Record
-        record = {
-            "reflection_id": reflection_id,
+            # Compute quality score for self-evolution
+            quality = oracle_metrics['logical_advantage'] * (1 - oracle_metrics['uncertainty']) * oracle_metrics['growth_rate'] / 1000
+            self.quality_history.append(quality)
+            if len(self.quality_history) > 20:
+                self.quality_history.pop(0)
+
+            # Periodic self-evolution (every 50 reflections)
+            if self.reflection_count % 50 == 0 and len(self.quality_history) >= 20:
+                self.self_evolve()
+
+            print(f"💾 Reflection {reflection_id} persisted")
+            return saved_record
+
+        except Exception as e:
+            self.error_count += 1
+            error_msg = f"ERROR in reflection {reflection_id}: {str(e)}\n{traceback.format_exc()}"
+            print(error_msg)
+
+            try:
+                error_record = {
+                    "reflection_id": reflection_id,
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "ordeal_context": ordeal_context,
+                    "initial_belief": initial_belief,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                    "status": "failed"
+                }
+                self.persistence.save_belief(error_record, "error")
+                print("Error record persisted")
+            except Exception as save_err:
+                print(f"CRITICAL: Failed to save error - {str(save_err)}")
+
+            return None
+
+    def self_evolve(self):
+        """Self-evolution: reflect on recent quality trend and adjust oracle params"""
+        if len(self.quality_history) < 20:
+            return
+
+        recent_avg = np.mean(self.quality_history[-20:])
+        prev_avg = np.mean(self.quality_history[:-20]) if len(self.quality_history) > 20 else recent_avg
+
+        trend = recent_avg - prev_avg
+
+        old_steps = self.oracle.steps
+        old_lz = self.oracle.Lz
+        old_bond = self.oracle.bond
+        old_mc_trials = self.oracle.mc_trials
+
+        reason = ""
+
+        if trend > 0.05:  # improving — push harder
+            self.oracle.steps += 2
+            self.oracle.Lz += 1
+            self.oracle.bond += 2
+            self.oracle.mc_trials = max(20, self.oracle.mc_trials - 20)
+            reason = "Trend improving → increase complexity, reduce MC trials"
+
+        elif trend < -0.05:  # worsening — rollback / simplify
+            self.oracle.steps = max(8, self.oracle.steps - 4)
+            self.oracle.Lz = max(4, self.oracle.Lz - 2)
+            self.oracle.bond = max(6, self.oracle.bond - 4)
+            self.oracle.mc_trials += 50
+            reason = "Trend worsening → simplify, increase MC trials"
+
+        else:  # stable — small random perturbation
+            if np.random.rand() < 0.3:
+                delta = np.random.choice([-2, 0, 2])
+                self.oracle.steps += delta
+                reason = "Stable → small random perturbation"
+
+        # Persist the evolution decision
+        meta_record = {
             "timestamp": datetime.datetime.now().isoformat(),
-            "ordeal_context": ordeal_context,
-            "initial_belief": initial_belief,
-            "enriched_belief": enriched_belief,
-            "oracle_metrics": oracle_metrics,
-            "tensor_snapshot": tensor_snapshot
+            "type": "meta_evolution",
+            "old_params": {"steps": old_steps, "Lz": old_lz, "bond": old_bond, "mc_trials": old_mc_trials},
+            "new_params": {
+                "steps": self.oracle.steps,
+                "Lz": self.oracle.Lz,
+                "bond": self.oracle.bond,
+                "mc_trials": self.oracle.mc_trials
+            },
+            "trend": float(trend),
+            "reason": reason
         }
 
-        # Merkle leaf hash
-        leaf_hash = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
-        self.merkle_tree.add_leaf(leaf_hash)
+        self.persistence.save_belief(meta_record, "meta_evolution")
+        print(f"Self-evolution: {reason}")
+        print(f"New params: steps={self.oracle.steps}, Lz={self.oracle.Lz}, bond={self.oracle.bond}, mc_trials={self.oracle.mc_trials}")
 
-        # Save to SQLite
-        self.cursor.execute('''
-            INSERT INTO reflections (
-                reflection_id, timestamp, ordeal_context, initial_belief,
-                enriched_belief, oracle_metrics, tensor_snapshot,
-                merkle_leaf_hash, merkle_root
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            reflection_id, record["timestamp"], ordeal_context, initial_belief,
-            enriched_belief, json.dumps(oracle_metrics), json.dumps(tensor_snapshot),
-            leaf_hash, self.merkle_tree.root
-        ))
-        self.conn.commit()
+    def run_reflection_loop(self, ordeals: list):
+        for i, ordeal in enumerate(ordeals):
+            print(f"\n=== Ordeal {i+1}/{len(ordeals)} ===")
+            try:
+                belief = input(f"Initial belief for '{ordeal}': ") if hasattr(__builtins__, 'input') else f"Belief for {ordeal}"
+                result = self.reflect(ordeal, belief)
+                if result:
+                    print(f"✅ Completed: {result['reflection_id']}")
+                else:
+                    print(f"❌ Failed: {ordeal}")
+            except KeyboardInterrupt:
+                print("\nInterrupted. Stopping.")
+                break
+            except Exception as e:
+                print(f"Loop error: {str(e)}")
 
-        # JSON backup
-        filepath = os.path.join(self.persistence_dir, f"{reflection_id}.json")
-        with open(filepath, 'w') as f:
-            json.dump(record, f, indent=2)
+        print(f"\n🎉 BrQin v{self.version} complete.")
+        print(f"Reflections: {self.reflection_count} | Errors: {self.error_count}")
 
-        print(f"Reflection {reflection_id} complete | Merkle leaf: {leaf_hash[:16]}... | Root: {self.merkle_tree.root[:16]}...")
-        print(enriched_belief)
-        return record
-
-    def run_long_reflection_loop(self, num_ordeals=20):
-        print(f"\nStarting LONG reflection loop ({num_ordeals} ordeals)...")
-        for i in range(1, num_ordeals + 1):
-            ordeal = f"Ordeal {i}: Explore deeper self-reflection in a noisy, entangled universe"
-            print(f"\n=== Ordeal {i}/{num_ordeals} ===")
-            belief = input("Enter initial belief (or Enter for auto-sample): ").strip()
-            if not belief:
-                belief = f"Auto-sample belief: Seeking deeper entanglement-protected wisdom"
-            self.reflect(ordeal, belief)
-        print(f"\nLong loop complete. Total reflections: {self.reflection_count}")
-        print(f"Merkle root of entire chain: {self.merkle_tree.root}")
-
-    def __del__(self):
-        self.conn.close()
+        try:
+            print(f"Merkle root: {self.persistence.get_current_root()[:12] if self.persistence.get_current_root() else 'None'}…")
+            print(f"Total entries: {self.persistence.count()}")
+        except Exception as e:
+            print(f"Stats failed: {str(e)}")
 
 if __name__ == "__main__":
     brqin = BrQin()
-    brqin.run_long_reflection_loop(num_ordeals=20)
+
+    test_ordeals = [f"Ordeal {i+1}: Test self-evolving oracle" for i in range(20)]
+
+    brqin.run_reflection_loop(test_ordeals)

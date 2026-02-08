@@ -1,89 +1,122 @@
-# oracle_peps.py
-# PEPS Tensor Oracle for BrQin v5.3 – scaled cotengra (parallel trials)
-# In-house Python – MIT License – QILLQuantum/Credo
-
+# oracle_peps.py - PEPS Oracle for BrQin v5.3 with Recursive Coarse-Graining (Higher-D Scaling)
 import time
-import multiprocessing as mp
 import numpy as np
-import cotengra as ctg
-from typing import Dict, Optional
+import torch
 
 class PepsOracle:
     def __init__(
         self,
         steps=12,
-        Lz=6,
-        bond=8,
-        use_gpu=False,
-        cotengra_max_repeats=256,
-        cotengra_max_time=180,
-        num_workers=None
+        base_dims=(8, 8, 8, 8),  # Base 3+1D block
+        levels=3,  # Recursive depth
+        max_bond=8,
+        device='cpu'
     ):
         self.steps = steps
-        self.Lz = Lz
-        self.bond = bond
-        self.use_gpu = use_gpu
-        self.device = 'cuda' if use_gpu else 'cpu'
+        self.base_dims = base_dims
+        self.levels = levels
+        self.max_bond = max_bond
+        self.device = device
 
-        # Scaled cotengra controls
-        self.cotengra_max_repeats = cotengra_max_repeats
-        self.cotengra_max_time = cotengra_max_time
-        self.num_workers = num_workers or mp.cpu_count()
+    def init_base_block(self):
+        """Initialize base 3+1D block with adaptive bonds"""
+        core = np.array([d//2 for d in self.base_dims])
+        max_dist = np.linalg.norm(np.array(self.base_dims)/2)
+        tensors = {}
+        
+        for idx in np.ndindex(self.base_dims):
+            pos = np.array(idx)
+            dist = np.linalg.norm(pos - core) / max_dist if max_dist > 0 else 0
+            scale = np.sin(np.pi / 2 * (1 - dist))
+            D = max(2, min(self.max_bond, int(self.max_bond * scale + 0.5)))
+            
+            shape = (D,) * (2 * len(self.base_dims)) + (2,)
+            tensor = torch.randn(*shape, dtype=torch.complex64, device=self.device)
+            tensor = tensor / tensor.norm() if tensor.norm() > 0 else tensor
+            tensors[idx] = tensor
+        
+        return {"tensors": tensors, "dims": self.base_dims}
 
-    def _worker_search(self, tensors, eq):
-        opt = ctg.HyperOptimizer(
-            methods=['greedy', 'labels'],
-            max_repeats=self.cotengra_max_repeats // self.num_workers,
-            max_time=self.cotengra_max_time,
-            progbar=False
-        )
-        path, info = opt.search(tensors, eq)
-        return info.opt_cost, info.naive_cost, len(path)
+    def coarse_grain_block(self, lower_state, reduction_factor=2):
+        """Coarse-grain lower block to parent via SVD truncation"""
+        lower_tensors = lower_state["tensors"]
+        lower_dims = lower_state["dims"]
+        
+        new_dims = tuple(d // reduction_factor for d in lower_dims)
+        if any(d < 2 for d in new_dims):
+            return None
+        
+        # Flatten and SVD
+        flat_list = list(lower_tensors.values())
+        flat = torch.stack(flat_list)
+        flat = flat.view(-1, flat.shape[-1])
+        U, S, Vh = torch.svd_lowrank(flat, q=self.max_bond // reduction_factor)
+        
+        new_D = min(self.max_bond // reduction_factor, S.shape[0])
+        coarse = U[:, :new_D] @ torch.diag(S[:new_D]) @ Vh[:new_D, :]
+        
+        # Reshape to parent (single site for simplicity)
+        coarse = coarse.view(*new_dims, new_D, new_D, 2)
+        parent_tensors = {(0,)*len(new_dims): coarse}
+        
+        return {"tensors": parent_tensors, "dims": new_dims}
 
-    def run(self, mode="light") -> Dict:
+    def build_recursive_hierarchy(self):
+        current = self.init_base_block()
+        hierarchy = [current]
+        
+        for level in range(1, self.levels + 1):
+            print(f"Coarse-graining level {level-1} → level {level}")
+            parent = self.coarse_grain_block(current)
+            if parent is None:
+                print("Minimum size reached — stopping")
+                break
+            current = parent
+            hierarchy.append(current)
+        
+        print(f"Recursive hierarchy complete — {len(hierarchy)} levels")
+        return hierarchy[-1]  # Top-level state
+
+    def approximate_contraction(self, state):
+        tensors = state["tensors"]
+        current = None
+        dims = state["dims"]
+        for slice_idx in range(dims[-1]):
+            layer = []
+            for coord in np.ndindex(dims[:-1]):
+                full_coord = coord + (slice_idx,)
+                layer.append(tensors[full_coord])
+            layer_tensor = torch.stack(layer)
+            layer_tensor = layer_tensor.view(-1, layer_tensor.shape[-1])
+            if current is None:
+                current = layer_tensor
+            else:
+                current = torch.tensordot(current, layer_tensor, dims=([0], [0]))
+        
+        norm = torch.abs(current).max().item()
+        energy = -np.log(norm + 1e-12) if norm > 0 else 0.0
+        return energy, norm
+
+    def run_with_state(self, mode="light", previous_state=None):
         start_time = time.time()
-
-        print(f"PEPS Oracle: steps={self.steps}, Lz={self.Lz}, bond={self.bond}, workers={self.num_workers}")
-
-        # Simulated PEPS tensors
-        tensors = [np.random.rand(self.bond, self.bond, self.bond, self.bond, 2) for _ in range(self.Lz * 4)]
-        eq = 'ijklm,abcde,...->'
-
-        # Parallel cotengra search
-        with mp.Pool(processes=self.num_workers) as pool:
-            results = pool.starmap(self._worker_search, [(tensors, eq) for _ in range(self.num_workers)])
-
-        # Best path
-        best_opt_cost = min(r[0] for r in results)
-        naive_cost = results[0][1]
-        best_path_length = min(r[2] for r in results)
-
-        total_search_time = time.time() - start_time
-        parallel_speedup = naive_cost / best_opt_cost if naive_cost > 0 else 1.0
-
-        # Simulated metrics
+        if previous_state is None:
+            state = self.build_recursive_hierarchy()
+        else:
+            state = previous_state
+        
+        energy, norm = self.approximate_contraction(state)
+        runtime = time.time() - start_time
+        
         metrics = {
-            "certified_energy": -6.0 - np.random.uniform(0.1, 0.5),
-            "uncertainty": 0.01,
-            "logical_advantage": 0.85,
-            "code_distance": 5,
-            "final_avg_bond": self.bond + np.random.uniform(0.5, 2.0),
-            "growth_rate": np.random.uniform(50, 150),
-            "contraction_info": {
-                "opt_cost": best_opt_cost,
-                "naive_cost": naive_cost,
-                "speedup": parallel_speedup,
-                "path_length": best_path_length,
-                "search_time_seconds": total_search_time,
-                "num_workers": self.num_workers
-            }
+            "updated_state": state,
+            "certified_energy": energy,
+            "norm": norm,
+            "runtime_seconds": runtime,
+            "levels": self.levels
         }
-
         return metrics
 
-# Test block
 if __name__ == "__main__":
-    oracle = PepsOracle(steps=12, Lz=6, bond=8, num_workers=4)
-    metrics = oracle.run(mode="light")
-    print("\nScaled Cotengra Metrics:")
-    print(metrics)
+    oracle = PepsOracle(levels=4, base_dims=(8,8,8,8), max_bond=8)
+    metrics = oracle.run_with_state()
+    print("Recursive higher-D metrics:", metrics)

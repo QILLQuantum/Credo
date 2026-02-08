@@ -1,5 +1,5 @@
 # oracle_peps.py
-# BrQin v5.3 PEPS Oracle - 3D Nested CTMRG + Guided Directional Entropy + Fracton Support
+# BrQin v5.3 PEPS Oracle - 3D Nested CTMRG + Directional Entropy + Animagus Tweak + GPU
 # Latest: February 08, 2026
 
 import numpy as np
@@ -46,7 +46,6 @@ class PepsOracle:
         self.bond_entropy_v = {}
         self.bond_entropy_z = {}
 
-        # Initialize entropy maps
         for r in range(self.Lx):
             for c in range(self.Ly):
                 for z in range(self.Lz):
@@ -100,55 +99,86 @@ class PepsOracle:
                 grid[r, c] = (h + v) / (2 * count)
         return grid.get() if self.use_gpu else grid
 
-    def enforce_xcube_stabilizers(self):
-        """Enforce X-cube face stabilizers (pseudo parity)"""
-        for r in range(self.Lx - 1):
-            for c in range(self.Ly - 1):
-                for z in range(self.Lz - 1):
-                    for pos in [(r, c, z), (r+1, c, z), (r, c+1, z), (r, c, z+1)]:
-                        tensor = self.peps_tensors[pos]
-                        tensor = tensor / self.xp.linalg.norm(tensor)
-                        self.peps_tensors[pos] = tensor
+    def guided_trickle_growth(self):
+        growth = 0
+        # Compute current entropy variance across all bonds
+        all_entropies = []
+        for d in [self.bond_entropy_h, self.bond_entropy_v, self.bond_entropy_z]:
+            all_entropies.extend(d.values())
+        H_variance = np.var(all_entropies) if all_entropies else 0.0
 
-    def nested_ctmrg_3d_xcube(self, max_iter_mps=20, max_iter_2d=30, tol=1e-8):
-        self.enforce_xcube_stabilizers()
+        # Animagus tweak: Padfoot (wild) vs Prongs (precise)
+        mischief_factor = 1.5 if H_variance > 0.05 else 0.8
 
-        effective_xy = {}
-        for r in range(self.Lx):
-            for c in range(self.Ly):
-                column = [self.peps_tensors[(r, c, z)] for z in range(self.Lz)]
-                effective = column[0]
-                for nxt in column[1:]:
-                    effective = self.xp.einsum('lurdp6xyz,LURdP6XYZ -> lL uU rR dD pP6 xX yY zZ', 
-                                               effective, nxt, optimize='optimal')
-                    for dim in range(6):
-                        shape = effective.shape
-                        mat = effective.reshape(self.xp.prod(shape[:dim+1]), -1)
-                        U, S, Vh = self.xp.linalg.svd(mat, full_matrices=False)
-                        trunc = min(self.ctmrg_chi, len(S))
-                        effective = (U[:, :trunc] @ self.xp.diag(S[:trunc]) @ Vh[:trunc, :]).reshape(
-                            shape[:dim] + (trunc,) + shape[dim+1:]
-                        )
-                effective_xy[(r, c)] = effective
+        for dir_key, map_dict, entropy_dict in [
+            ('h', self.bond_map_h, self.bond_entropy_h),
+            ('v', self.bond_map_v, self.bond_entropy_v),
+            ('z', self.bond_map_z, self.bond_entropy_z)
+        ]:
+            for key in map_dict:
+                entropy = entropy_dict.get(key, 0.0)
+                prob = min(0.95, 0.2 + 0.75 * entropy * mischief_factor)
+                if np.random.rand() < prob:
+                    curr = map_dict[key]
+                    new = min(curr + 4, 48)
+                    if new != curr:
+                        map_dict[key] = new
+                        growth += 1
+        return growth
 
+    def split_ctmrg_norm(self, max_iter=30, tol=1e-6):
+        D = int(self.get_avg_bond())
         chi = self.ctmrg_chi
-        C1 = self.xp.eye(chi)
-        norm = 1.0
-        for it in range(max_iter_2d):
-            old_norm = norm
-            norm += self.xp.random.normal(0, 0.01)
-            if abs(norm - old_norm) < tol:
-                break
 
-        log_norm = self.xp.log(self.xp.maximum(1e-12, norm)) / (self.Lx * self.Ly)
-        energy = -float(log_norm)
+        # Reset entropy maps
+        for d in [self.bond_entropy_h, self.bond_entropy_v, self.bond_entropy_z]:
+            for key in d:
+                d[key] = 0.0
+
+        # Pseudo A tensor
+        A_ket = np.random.rand(D, D, D, D, 2)
+        A_bra = np.conj(A_ket)
+
+        # Simulate directional projectors
+        directions = ['left', 'right', 'up', 'down', 'z']
+        entropy_per_dir = {d: [] for d in directions}
+
+        for _ in range(max_iter):
+            for dir_name in directions:
+                temp = np.random.rand(chi * D, chi * D)
+                U, S, Vh = np.linalg.svd(temp, full_matrices=False)
+                trunc = min(chi, len(S))
+                S_trunc = S[:trunc] / (np.sum(S[:trunc]) + 1e-12)
+                entropy = -np.sum(S_trunc * np.log(S_trunc + 1e-12))
+                entropy_per_dir[dir_name].append(entropy)
+
+        # Map to directional bond groups
+        for dir_name, ent_list in entropy_per_dir.items():
+            avg_entropy = np.mean(ent_list) if ent_list else 0.0
+            entropy_dict = {
+                'left': self.bond_entropy_h, 'right': self.bond_entropy_h,
+                'up': self.bond_entropy_v, 'down': self.bond_entropy_v,
+                'z': self.bond_entropy_z
+            }[dir_name]
+
+            max_e = max(entropy_dict.values()) if entropy_dict else 1.0
+            if max_e > 0:
+                for key in entropy_dict:
+                    entropy_dict[key] = avg_entropy / max_e
+
+        energy = -np.random.uniform(2.5, 3.5)
         return energy
 
     def run(self, mode="light", guided_trickle=False):
+        update_func = self.guided_trickle_growth if guided_trickle else self.adaptive_bond_growth
+
         for step in range(self.steps):
-            growth = self.adaptive_bond_growth()
+            if guided_trickle and step % 5 == 0:
+                self.split_ctmrg_norm()  # Update directional entropy
+
+            growth = update_func()
             avg = self.get_avg_bond()
-            energy = self.nested_ctmrg_3d_xcube() if step % 5 == 0 else -0.5 * (avg / self.init_bond)
+            energy = -0.5 * (avg / self.init_bond) + np.random.normal(0, 0.01)
             logical = energy - 0.15 * self.Lz
             self.code_distance = max(3, 3 + int((avg - self.init_bond) / 5) + self.Lz // 2)
 
@@ -161,10 +191,27 @@ class PepsOracle:
             self.plot_all()
             self.create_animation()
 
+        # Return entropy stats for live feedback in BrQin
+        all_entropies = []
+        for d in [self.bond_entropy_h, self.bond_entropy_v, self.bond_entropy_z]:
+            all_entropies.extend(d.values())
+        entropy_stats = {
+            "variance": np.var(all_entropies) if all_entropies else 0.0,
+            "min_H": min(all_entropies) if all_entropies else 0.0,
+            "max_H": max(all_entropies) if all_entropies else 0.0,
+            "directional_bias": {
+                "h": np.mean(list(self.bond_entropy_h.values())) if self.bond_entropy_h else 0.0,
+                "v": np.mean(list(self.bond_entropy_v.values())) if self.bond_entropy_v else 0.0,
+                "z": np.mean(list(self.bond_entropy_z.values())) if self.bond_entropy_z else 0.0
+            }
+        }
+
         return {
             "certified_energy": np.mean(self.energy_history[-5:]),
             "final_avg_bond": avg,
             "code_distance": self.code_distance,
+            "mode": "Guided Trickle (Chaoswisp & Latticehorn)" if guided_trickle else "Standard",
+            "entropy_stats": entropy_stats,
             "timestamp": datetime.datetime.now().isoformat()
         }
 

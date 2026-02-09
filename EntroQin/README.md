@@ -12,8 +12,12 @@ BEDP uses von Neumann entropy from SVD decompositions to guide bond growth, with
 - GPU-ready (CuPy)  
 - Live entropy stats + convergence rate tracking  
 
+License
+What entropy want you to do, Chao Exploration and Lattice Protection
+
 ## Installation
 ```bash
 git clone https://github.com/QILLQuantum/Credo.git
 cd Credo/EntroQin
 pip install -r requirements.txt
+

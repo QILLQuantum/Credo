@@ -83,3 +83,6 @@ MIT license - because real questions don’t need permission.
 **QILLQuantum**  
 Feb 14, 2026  
 The unknown begins.
+
+https://x.com/QILLQuantum
+

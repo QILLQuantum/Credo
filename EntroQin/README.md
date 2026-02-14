@@ -4,9 +4,10 @@
 **We built a birth canal through it.**
 
 From a quiet question in early 2026  
-→ to monster runs at 67 million sites 
+To monster runs at 67 million sites 
 → to live signals 
-This is the timeline of a single in-house thread that ended up engineering order from chaos.
+
+*This is the timeline of a single in-house thread that ended up engineering order from chaos.*
 
 ### Timeline - How the birth channel opened
 
@@ -85,4 +86,5 @@ Feb 14, 2026
 The unknown begins.
 
 https://x.com/QILLQuantum
+
 

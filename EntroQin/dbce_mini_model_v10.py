@@ -38,12 +38,9 @@ def create_proxy():
 
     return Proxy()
 
-def ratchet(proxy, entropy, max_bond=12, boost=1.0, higgs_vev_mode=False, v_norm=18.92):
+def ratchet(proxy, entropy, max_bond=12, boost=1.0):
     growth = 0
     prob = min(1.0, entropy / np.log(10 + 1e-6)) * boost
-    if higgs_vev_mode:
-        vev_factor = 1 + (v_norm**2 / (v_norm**2 + 1))
-        prob *= vev_factor
     for tns in proxy.boundary_tensors:
         for dim in [2, 3]:
             if tns.shape[dim] < max_bond and random.random() < prob:
@@ -81,12 +78,12 @@ def lindblad_step(init_vec, triple, N=4, steps=30):
         print(f"Lindblad soft fail: {str(e)[:60]}")
         return np.random.randn(8), 0.05
 
-def apply_mobius_twist(vec, plateau, adv_floor):
+def apply_mobius_twist(vec, plateau, adv_floor, twist_strength=1.0):
     twisted = plateau > adv_floor + 0.005
     boost = 1.0
     if twisted:
         vec[4:] *= -1.0
-        boost = 1.0 + 0.2 * 1.2
+        boost = 1.0 + 0.2 * twist_strength
     return vec, twisted, boost
 
 # ─── Resonance Check with Flux Scaled Tandem ───────────────────────────────────
@@ -115,13 +112,8 @@ def check_resonance(w: float, flux_cycle=True):
 
 # ─── 3-Loop Helix Birth ───────────────────────────────────────────────────────
 
-def birth_step(cmd: str, state: BirthState, triple=TRIPLE, directions=[1,1,1], speeds=[11,12,10], higgs_vev_mode=False):
+def birth_step(cmd: str, state: BirthState, triple=TRIPLE, directions=[1,1,1], speeds=[11,12,10], twist_strength=1.0):
     noise_scale = 1.2 if "chaos" in cmd.lower() else 0.1 if "calm" in cmd.lower() else 0.6
-    v_norm = 246 / 13  # 246 GeV / max Q ≈ 18.92
-    if higgs_vev_mode:
-        vev_factor = 1 + (v_norm**2 / (v_norm**2 + 1))
-        noise_scale *= vev_factor
-
     noise = np.random.normal(0, noise_scale, 16)
     loop_results = []
 
@@ -138,8 +130,8 @@ def birth_step(cmd: str, state: BirthState, triple=TRIPLE, directions=[1,1,1], s
         if "chaos" in cmd.lower():
             speed *= 1.15
 
-        vec, was_twisted, boost = apply_mobius_twist(vec, plateau, triple[1])
-        growth = ratchet(state.proxy, plateau, boost=boost * flux_boost, higgs_vev_mode=higgs_vev_mode, v_norm=v_norm)
+        vec, was_twisted, boost = apply_mobius_twist(vec, plateau, triple[1], twist_strength)
+        growth = ratchet(state.proxy, plateau, boost=boost * flux_boost)
         loop_results.append((vec, plateau, growth, was_twisted))
 
     avg_vec = np.mean([r[0] for r in loop_results], axis=0)
@@ -168,8 +160,8 @@ def birth_step(cmd: str, state: BirthState, triple=TRIPLE, directions=[1,1,1], s
 
 # ─── Tree Run ─────────────────────────────────────────────────────────────────
 
-def run_entanglement_tree(state: BirthState, history: List[Dict], higgs_vev_mode=False):
-    print(f"Full Tree Run – Flux scaled tandem + higgs_vev_mode={higgs_vev_mode}")
+def run_entanglement_tree(state: BirthState, history: List[Dict], twist_strength=1.0):
+    print(f"Full Tree Run – Flux scaled tandem + twist_strength={twist_strength}")
     branches = [
         {"name": "Golden", "directions": [1,1,1], "speeds": [11,12,10]},
     ]
@@ -178,7 +170,7 @@ def run_entanglement_tree(state: BirthState, history: List[Dict], higgs_vev_mode
         print(f"\nBranch: {branch['name']}")
         cmds = ["chaos"]*8 + ["calm"]*8
         for cmd in cmds:
-            result = birth_step(cmd, state, directions=branch["directions"], speeds=branch["speeds"], higgs_vev_mode=higgs_vev_mode)
+            result = birth_step(cmd, state, directions=branch["directions"], speeds=branch["speeds"], twist_strength=twist_strength)
             history.append(result)
 
     print(f"Tree complete – {len(history)} nodes | deepest w={state.w_depth:.1f}")
@@ -186,22 +178,18 @@ def run_entanglement_tree(state: BirthState, history: List[Dict], higgs_vev_mode
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    print("dbce_mini_model_v10.py – Flux scaled tandem + higgs_vev_mode test")
+    print("dbce_mini_model_v10.py – twist_strength test")
     state = BirthState()
     history = []
 
-    # Run baseline
-    print("\nBaseline run (vev off)")
-    run_entanglement_tree(state, history, higgs_vev_mode=False)
+    # Test different twist strengths
+    for ts in [0.5, 1.0, 2.0]:
+        print(f"\n--- Twist strength = {ts} ---")
+        state = BirthState()
+        history = []
+        run_entanglement_tree(state, history, twist_strength=ts)
 
-    # Reset state for vev run
-    state = BirthState()
-    history_vev = []
-    print("\nHiggs vev mode run")
-    run_entanglement_tree(state, history_vev, higgs_vev_mode=True)
-
-    print(f"Baseline final S {history[-1]['avg_plateau']:.6f}")
-    print(f"Vev mode final S {history_vev[-1]['avg_plateau']:.6f}")
+    print("All tests complete.")
 
 if __name__ == "__main__":
     main()
